@@ -62,6 +62,12 @@ Other requested models are hard runtime requirements.
 Clause mode requires a model with the parser pipeline enabled,
 because clause candidates depend on POS tags and dependency labels.
 
+spaCy cold start dominates short interactive runs.
+Importing spaCy and loading the model costs far more than formatting
+a small Markdown selection.
+Sembrr excludes unused model components such as NER and lemmatization,
+but a fresh CLI process should still expect noticeable startup latency.
+
 ## Linebreaking Algorithm
 
 Linebreaking has two phases:

@@ -35,7 +35,7 @@ class SentenceEngine:
         self._model = model
 
         try:
-            self._nlp: Any = spacy.load(model, disable=["ner"])
+            self._nlp: Any = spacy.load(model, exclude=["ner", "lemmatizer"])
         except OSError as error:
             raise SentenceEngineError(f"spaCy model not found: {model}") from error
 
