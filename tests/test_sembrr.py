@@ -491,6 +491,36 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(selected, [finite_coordinate])
 
+    def test_phrase_mode_nests_weaker_breaks_inside_stronger_breaks(self) -> None:
+        source = (
+            "Alpha section introduces a durable premise, continuing with enough detail "
+            "for readers; Beta section extends the concrete result, adding enough detail "
+            "for maintainers."
+        )
+        left_phrase = BreakCandidate(
+            offset=source.index("continuing"),
+            kind="participial_phrase",
+            confidence=0.45,
+            reason="test left phrase boundary",
+        )
+        semicolon = BreakCandidate(
+            offset=source.index(";") + 1,
+            kind="semicolon",
+            confidence=0.95,
+            reason="test semicolon boundary",
+        )
+        right_phrase = BreakCandidate(
+            offset=source.index("adding"),
+            kind="participial_phrase",
+            confidence=0.45,
+            reason="test right phrase boundary",
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=58, min_clause_chars=20)
+
+        selected = select_breaks(source, [], [left_phrase, semicolon, right_phrase], options)
+
+        self.assertEqual(selected, [left_phrase, semicolon, right_phrase])
+
     def test_phrase_mode_formats_markdown(self) -> None:
         source = (
             "**Use it** when it looks better than other options like colons and parentheses "

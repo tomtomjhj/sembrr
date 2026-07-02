@@ -189,9 +189,15 @@ OPTIONAL_KIND_PRIORITY = {
     "participial_phrase": 0,
     "comma_phrase": -1,
 }
-LAYOUT_LEVEL_SEMANTIC = 0
-LAYOUT_LEVEL_COMMA_FALLBACK = 1
-LAYOUT_LEVEL_WORD_FALLBACK = 2
+SEMANTIC_PRIORITIES = tuple(
+    sorted(
+        {priority for kind, priority in OPTIONAL_KIND_PRIORITY.items() if kind != "comma_phrase"},
+        reverse=True,
+    )
+)
+SEMANTIC_LEVEL_BY_PRIORITY = {priority: index for index, priority in enumerate(SEMANTIC_PRIORITIES)}
+LAYOUT_LEVEL_COMMA_FALLBACK = len(SEMANTIC_PRIORITIES)
+LAYOUT_LEVEL_WORD_FALLBACK = LAYOUT_LEVEL_COMMA_FALLBACK + 1
 
 
 def _spacy_optional_candidates(
@@ -471,23 +477,23 @@ def _layout_breaks(
     breakpoints: list[RankedBreakpoint] = []
 
     for candidate in candidates:
-        if _valid_fragment(text, candidate.offset, 0, len(text), options):
-            breakpoints.append(
-                RankedBreakpoint(
-                    candidate=candidate,
-                    level=LAYOUT_LEVEL_SEMANTIC,
-                    require_min_fragment=True,
-                )
-            )
-
-        if options.mode == "strict" and candidate.kind == "comma_phrase":
+        if candidate.kind == "comma_phrase":
             breakpoints.append(
                 RankedBreakpoint(
                     candidate=candidate,
                     level=LAYOUT_LEVEL_COMMA_FALLBACK,
-                    require_min_fragment=False,
+                    require_min_fragment=options.mode != "strict",
                 )
             )
+            continue
+
+        breakpoints.append(
+            RankedBreakpoint(
+                candidate=candidate,
+                level=_semantic_level(candidate),
+                require_min_fragment=True,
+            )
+        )
 
     if options.mode == "strict":
         breakpoints.extend(_word_breakpoints(text, protected_spans))
@@ -521,24 +527,31 @@ def _select_layout_breaks(
     selected_offsets = {candidate.offset for candidate in selected}
     boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
     boundaries = sorted(set(boundaries))
-    pending = deque(zip(boundaries, boundaries[1:], strict=False))
+    pending = deque((start, end, 0) for start, end in zip(boundaries, boundaries[1:], strict=False))
 
     while pending:
-        start, end = pending.popleft()
+        start, end, level = pending.popleft()
         if _trimmed_len(state, start, end) <= options.target_segment_chars:
             continue
 
-        target = start + options.target_segment_chars
-        chosen = _best_breakpoint_in_segment(start, end, state, selected_offsets, target, options)
-        if chosen is None:
+        if level > LAYOUT_LEVEL_WORD_FALLBACK:
             continue
 
-        selected.append(chosen.candidate)
-        selected_offsets.add(chosen.candidate.offset)
+        chosen = _breakpoints_at_level(start, end, level, state, selected_offsets, options)
+        if not chosen:
+            pending.appendleft((start, end, level + 1))
+            continue
 
-        offset = chosen.candidate.offset
-        pending.appendleft((offset, end))
-        pending.appendleft((start, offset))
+        for ranked in chosen:
+            selected.append(ranked.candidate)
+            selected_offsets.add(ranked.candidate.offset)
+
+        next_level = level if _is_fallback_level(level) else level + 1
+        split_offsets = [ranked.candidate.offset for ranked in chosen]
+        split_boundaries = [start] + sorted(split_offsets) + [end]
+        segments = list(zip(split_boundaries, split_boundaries[1:], strict=False))
+        for segment_start, segment_end in reversed(segments):
+            pending.appendleft((segment_start, segment_end, next_level))
 
 
 def _layout_state(text: str, breakpoints: list[RankedBreakpoint]) -> LayoutState:
@@ -582,70 +595,50 @@ def _trailing_run(text: str) -> list[int]:
     return run_lengths
 
 
-def _best_breakpoint_in_segment(
+def _semantic_level(candidate: BreakCandidate) -> int:
+    priority = OPTIONAL_KIND_PRIORITY.get(candidate.kind, 0)
+    return SEMANTIC_LEVEL_BY_PRIORITY[priority]
+
+
+def _is_fallback_level(level: int) -> bool:
+    return level in {LAYOUT_LEVEL_COMMA_FALLBACK, LAYOUT_LEVEL_WORD_FALLBACK}
+
+
+def _breakpoints_at_level(
     start: int,
     end: int,
-    state: LayoutState,
-    selected_offsets: set[int],
-    target: int,
-    options: BreakOptions,
-) -> RankedBreakpoint | None:
-    for level in (
-        LAYOUT_LEVEL_SEMANTIC,
-        LAYOUT_LEVEL_COMMA_FALLBACK,
-        LAYOUT_LEVEL_WORD_FALLBACK,
-    ):
-        best = _best_breakpoint_at_level(
-            level,
-            start,
-            end,
-            state,
-            selected_offsets,
-            target,
-            options,
-        )
-        if best is not None:
-            return best
-
-    return None
-
-
-def _best_breakpoint_at_level(
     level: int,
-    start: int,
-    end: int,
     state: LayoutState,
     selected_offsets: set[int],
-    target: int,
     options: BreakOptions,
-) -> RankedBreakpoint | None:
+) -> list[RankedBreakpoint]:
     breakpoints = state.breakpoints_by_level.get(level)
     offsets = state.offsets_by_level.get(level)
     if not breakpoints or not offsets:
-        return None
+        return []
 
     first = bisect_left(offsets, start + 1)
     last = bisect_left(offsets, end)
     if first == last:
-        return None
+        return []
 
-    if level == LAYOUT_LEVEL_SEMANTIC:
-        return _best_semantic_breakpoint(
+    if _is_fallback_level(level):
+        chosen = _best_fallback_breakpoint(
             breakpoints,
-            range(first, last),
+            offsets,
+            first,
+            last,
             start,
             end,
             state,
             selected_offsets,
-            target,
             options,
         )
+        return [] if chosen is None else [chosen]
 
-    return _best_fallback_breakpoint(
+    return _semantic_breakpoints_at_level(
         breakpoints,
-        offsets,
-        first,
-        last,
+        range(first, last),
         start,
         end,
         state,
@@ -654,30 +647,37 @@ def _best_breakpoint_at_level(
     )
 
 
-def _best_semantic_breakpoint(
+def _semantic_breakpoints_at_level(
     breakpoints: list[RankedBreakpoint],
     indexes: range,
     start: int,
     end: int,
     state: LayoutState,
     selected_offsets: set[int],
-    target: int,
     options: BreakOptions,
-) -> RankedBreakpoint | None:
-    best: RankedBreakpoint | None = None
-    best_rank: tuple[float, float, float, float, float] | None = None
+) -> list[RankedBreakpoint]:
+    chosen: list[RankedBreakpoint] = []
+    lower = start
 
     for index in indexes:
         ranked = breakpoints[index]
-        if not _eligible_breakpoint(ranked, start, end, state, selected_offsets, options):
+        offset = ranked.candidate.offset
+        if offset in selected_offsets or offset <= lower or offset >= end:
             continue
 
-        rank = _breakpoint_rank(ranked, state, start, target, options)
-        if best_rank is None or rank < best_rank:
-            best = ranked
-            best_rank = rank
+        if ranked.require_min_fragment and not _valid_fragment_in_state(
+            state,
+            offset,
+            lower,
+            end,
+            options,
+        ):
+            continue
 
-    return best
+        chosen.append(ranked)
+        lower = offset
+
+    return chosen
 
 
 def _best_fallback_breakpoint(
@@ -748,29 +748,6 @@ def _eligible_breakpoint(
     )
 
 
-def _breakpoint_rank(
-    ranked: RankedBreakpoint,
-    state: LayoutState,
-    start: int,
-    target: int,
-    options: BreakOptions,
-) -> tuple[float, float, float, float, float]:
-    candidate = ranked.candidate
-    if ranked.level == LAYOUT_LEVEL_SEMANTIC:
-        return (
-            ranked.level,
-            -OPTIONAL_KIND_PRIORITY.get(candidate.kind, 0),
-            -candidate.confidence,
-            abs(candidate.offset - target),
-            candidate.offset,
-        )
-
-    left_len = _trimmed_len(state, start, candidate.offset)
-    if left_len <= options.target_segment_chars:
-        return (ranked.level, 0, -left_len, candidate.offset, 0)
-    return (ranked.level, 1, left_len, candidate.offset, 0)
-
-
 def _valid_fragment_in_state(
     state: LayoutState,
     offset: int,
@@ -801,6 +778,8 @@ def _word_boundary_offsets(
     end: int,
     protected_spans: tuple[tuple[int, int], ...],
 ) -> Iterable[int]:
+    spans = sorted(protected_spans)
+    span_index = 0
     offset = start + 1
     while offset < end:
         if not text[offset].isspace():
@@ -811,18 +790,16 @@ def _word_boundary_offsets(
         while next_offset < end and text[next_offset].isspace():
             next_offset += 1
 
-        if (
-            not text[offset - 1].isspace()
-            and next_offset < end
-            and not _inside_protected_span(offset, protected_spans)
-        ):
+        while span_index < len(spans) and spans[span_index][1] <= offset:
+            span_index += 1
+
+        inside_protected_span = (
+            span_index < len(spans) and spans[span_index][0] < offset < spans[span_index][1]
+        )
+        if not text[offset - 1].isspace() and next_offset < end and not inside_protected_span:
             yield offset
 
         offset = next_offset
-
-
-def _inside_protected_span(offset: int, protected_spans: tuple[tuple[int, int], ...]) -> bool:
-    return any(start < offset < end for start, end in protected_spans)
 
 
 def _dedupe_candidates(candidates: Iterable[BreakCandidate], text_len: int) -> list[BreakCandidate]:

@@ -115,37 +115,79 @@ Segment length checks include Markdown marker characters,
 so `target_segment_chars` describes the source line that will be printed,
 not only the prose seen by spaCy.
 
-The selector is a ranked breakpoint pass.
+The selector is a hierarchical ranked breakpoint pass.
+Its model is the traditional pretty-printing `group`:
+a group stays flat when it fits,
+and otherwise its breakpoints become available while nested groups decide inside it.
+Wadler presents this as an algorithm equivalent to Oppen's printer,
+and the PrettyExpressive survey classifies Oppen-style printers
+as the traditional group-based pretty-printing language.
 Sentence breaks are mandatory.
 Other breakpoints are optional,
 and the active mode controls which levels are available:
 
-- Semantic breakpoints use clause and phrase priorities.
-  They must satisfy `min_clause_chars`.
-- Strict comma fallback breakpoints reuse comma phrase candidates
+- Semantic breakpoints use clause and phrase priorities as nesting levels.
+  A stronger level splits a long segment before weaker levels run inside the pieces.
+- Comma fallback breakpoints reuse comma phrase candidates
   after semantic breakpoints fail.
+  Phrase mode keeps the normal `min_clause_chars` check.
+  Strict mode can use short comma fragments.
 - Strict word fallback breakpoints are generated from word boundaries.
-  They are last resort breakpoints.
+  They are the final level.
 
 Candidate selection is deterministic and greedy:
 
 1. Always emit mandatory sentence breaks.
-2. Find the first segment that exceeds `target_segment_chars`.
-3. Choose the highest-ranked eligible breakpoint in that segment.
-4. Prefer stronger semantic kinds before weaker semantic kinds.
-5. Prefer higher confidence inside the same semantic kind.
-6. Prefer fallback breakpoints before the target when possible.
-7. Repeat until no over-target segment has an eligible breakpoint.
+2. Start each mandatory segment at the strongest semantic level.
+3. Keep a segment flat when its printed source length fits `target_segment_chars`.
+4. At a semantic level,
+   choose safe breakpoints from that level in source order.
+5. Split the segment at those breakpoints,
+   then run the next weaker level inside each resulting chunk.
+6. If a semantic level has no eligible breakpoints,
+   try the next weaker level on the same segment.
+7. At comma and word fallback levels,
+   choose one breakpoint near the target,
+   split the segment,
+   and retry the same fallback level inside the resulting chunks.
+8. Stop when a segment fits,
+   or when no lower level exists.
 
-The current selector is not a linear Oppen pretty printer.
-It indexes breakpoints by level and source offset,
-then processes over-target segments from left to right.
-Fallback comma and word breakpoints use offset lookup and binary search.
-Semantic breakpoint ranking still scans semantic breakpoints
-inside the current over-target segment,
-so pathological semantic-candidate distributions can still take quadratic time.
+The selector uses Oppen-style grouping,
+but it is not a complete streaming Oppen printer.
+Classic Oppen printers stream a document with explicit group and break commands.
+Sembrr already has the full text,
+the parser output,
+and a flat set of ranked source offsets.
+Its hierarchy comes from priority levels:
+stronger breaks partition the segment,
+and weaker breaks are considered only inside those partitions.
+Comma and word fallback levels are closer to Wadler's `fillwords` behavior:
+they fill each line near the target rather than opening every possible break.
+
+The selector indexes breakpoints by level and source offset.
+Fallback comma and word levels use offset lookup and binary search.
+Semantic levels scan the candidates inside the current over-target segment,
+then greedily keep a source-ordered safe subset.
+After candidate discovery,
+the selector is `O(n + P log P + S log S + B log B)`,
+where `n` is the source length,
+`P` is the number of protected Markdown spans,
+`S` is the number of mandatory sentence breaks,
+and `B` is the number of optional breakpoints,
+including generated strict word-boundary breakpoints.
+Space use is `O(n + S + B)`.
 Interactive use is normally dominated by spaCy startup and parsing,
 but large-document use should profile the selector separately.
+
+References:
+
+- Philip Wadler,
+  [A prettier printer](https://homepages.inf.ed.ac.uk/wadler/papers/prettier/prettier.pdf).
+- Sorawee Porncharoenwase,
+  Justin Pombrio,
+  and Emina Torlak,
+  [A Pretty Expressive Printer](https://arxiv.org/pdf/2310.01530).
 
 Sembrr is not a width-based wrapper.
 If a sentence is long and has no safe semantic break,
