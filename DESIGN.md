@@ -95,38 +95,55 @@ but a fresh CLI process should still expect noticeable startup latency.
 
 ## Linebreaking Algorithm
 
-Linebreaking has two phases:
+Linebreaking has five phases:
 
 1. Project source to prose text.
 2. Discover candidate breaks in the projected text.
-3. Choose which candidates to print.
-4. Map selected break offsets back to source offsets.
+3. Convert candidates into ranked layout breakpoints.
+4. Choose which breakpoints to print.
+5. Map selected break offsets back to source offsets.
 
 Candidate discovery uses projected prose and spaCy tokens.
 It marks sentence boundaries as mandatory,
 and it marks semicolon, colon, dash,
 and dependency-based clause boundaries as optional.
 Phrase and strict modes also mark selected phrase boundaries as optional.
-Strict mode can add word-boundary breaks after candidate selection.
+Strict mode also permits fallback comma and word-boundary breakpoints.
 
 Candidate selection uses source offsets.
 Segment length checks include Markdown marker characters,
 so `target_segment_chars` describes the source line that will be printed,
 not only the prose seen by spaCy.
 
+The selector is a ranked breakpoint pass.
+Sentence breaks are mandatory.
+Other breakpoints are optional,
+and the active mode controls which levels are available:
+
+- Semantic breakpoints use clause and phrase priorities.
+  They must satisfy `min_clause_chars`.
+- Strict comma fallback breakpoints reuse comma phrase candidates
+  after semantic breakpoints fail.
+- Strict word fallback breakpoints are generated from word boundaries.
+  They are last resort breakpoints.
+
 Candidate selection is deterministic and greedy:
 
 1. Always emit mandatory sentence breaks.
-2. Consider optional breaks only when a segment exceeds `target_segment_chars`.
-3. Reject candidates that create fragments shorter than `min_clause_chars`.
-4. Pick the strongest safe candidate in the first over-target segment.
-5. Prefer higher-confidence candidates of the same kind.
-6. Use distance from `target_segment_chars` as the final tiebreaker.
-7. Repeat until no over-target segment has a safe candidate.
+2. Find the first segment that exceeds `target_segment_chars`.
+3. Choose the highest-ranked eligible breakpoint in that segment.
+4. Prefer stronger semantic kinds before weaker semantic kinds.
+5. Prefer higher confidence inside the same semantic kind.
+6. Prefer fallback breakpoints before the target when possible.
+7. Repeat until no over-target segment has an eligible breakpoint.
 
-Strict mode then adds word-boundary breaks
-until all segments fit `target_segment_chars`
-or no word boundary remains.
+The current selector is not a linear Oppen pretty printer.
+It repeatedly finds the first over-target segment
+and scans ranked breakpoints for that segment.
+In strict mode, word boundaries can make the breakpoint set proportional to input length,
+so pathological paragraphs can take quadratic time or worse.
+Interactive use is normally dominated by spaCy startup and parsing,
+but the selector should be improved before treating strict mode as a general wrapper.
 
 Sembrr is not a width-based wrapper.
 If a sentence is long and has no safe semantic break,

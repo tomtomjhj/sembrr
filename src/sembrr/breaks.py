@@ -23,6 +23,13 @@ class BreakOptions:
 
 
 @dataclass(frozen=True)
+class RankedBreakpoint:
+    candidate: BreakCandidate
+    level: int
+    require_min_fragment: bool
+
+
+@dataclass(frozen=True)
 class ClauseMarkerRule:
     words: frozenset[str]
     kind: str
@@ -172,6 +179,9 @@ OPTIONAL_KIND_PRIORITY = {
     "participial_phrase": 0,
     "comma_phrase": -1,
 }
+LAYOUT_LEVEL_SEMANTIC = 0
+LAYOUT_LEVEL_COMMA_FALLBACK = 1
+LAYOUT_LEVEL_WORD_FALLBACK = 2
 
 
 def _spacy_optional_candidates(
@@ -398,36 +408,13 @@ def select_breaks(
     if options.mode not in {"clause", "phrase", "strict"}:
         return selected
 
-    optional_candidates = [
-        candidate
-        for candidate in optional
-        if _valid_fragment(text, candidate.offset, 0, len(text), options)
-    ]
-    selected_offsets = {candidate.offset for candidate in selected}
-
-    while True:
-        chosen = _next_optional_break(
-            text, selected, optional_candidates, selected_offsets, options
-        )
-        if chosen is None:
-            break
-
-        selected.append(chosen)
-        selected_offsets.add(chosen.offset)
-
-    if options.mode == "strict":
-        _add_strict_candidate_breaks(
-            text,
-            selected,
-            [candidate for candidate in optional if candidate.kind == "comma_phrase"],
-            options,
-        )
-        _add_strict_word_breaks(
-            text,
-            selected,
-            options,
-            protected_spans=tuple(protected_spans),
-        )
+    layout = _layout_breaks(
+        text,
+        optional,
+        options,
+        protected_spans=tuple(protected_spans),
+    )
+    _select_layout_breaks(text, selected, layout, options)
 
     return sorted(selected, key=lambda candidate: candidate.offset)
 
@@ -464,13 +451,81 @@ def _after_closing_punctuation(text: str, offset: int) -> int:
     return offset
 
 
-def _next_optional_break(
+def _layout_breaks(
+    text: str,
+    candidates: Iterable[BreakCandidate],
+    options: BreakOptions,
+    *,
+    protected_spans: tuple[tuple[int, int], ...],
+) -> list[RankedBreakpoint]:
+    breakpoints: list[RankedBreakpoint] = []
+
+    for candidate in candidates:
+        if _valid_fragment(text, candidate.offset, 0, len(text), options):
+            breakpoints.append(
+                RankedBreakpoint(
+                    candidate=candidate,
+                    level=LAYOUT_LEVEL_SEMANTIC,
+                    require_min_fragment=True,
+                )
+            )
+
+        if options.mode == "strict" and candidate.kind == "comma_phrase":
+            breakpoints.append(
+                RankedBreakpoint(
+                    candidate=candidate,
+                    level=LAYOUT_LEVEL_COMMA_FALLBACK,
+                    require_min_fragment=False,
+                )
+            )
+
+    if options.mode == "strict":
+        breakpoints.extend(_word_breakpoints(text, protected_spans))
+
+    return breakpoints
+
+
+def _word_breakpoints(
+    text: str,
+    protected_spans: tuple[tuple[int, int], ...],
+) -> Iterable[RankedBreakpoint]:
+    for offset in _word_boundary_offsets(text, 0, len(text), protected_spans):
+        yield RankedBreakpoint(
+            candidate=BreakCandidate(
+                offset=offset,
+                kind="word",
+                confidence=0.0,
+                reason="strict word boundary",
+            ),
+            level=LAYOUT_LEVEL_WORD_FALLBACK,
+            require_min_fragment=False,
+        )
+
+
+def _select_layout_breaks(
+    text: str,
+    selected: list[BreakCandidate],
+    layout: list[RankedBreakpoint],
+    options: BreakOptions,
+) -> None:
+    selected_offsets = {candidate.offset for candidate in selected}
+
+    while True:
+        chosen = _next_layout_break(text, selected, layout, selected_offsets, options)
+        if chosen is None:
+            return
+
+        selected.append(chosen.candidate)
+        selected_offsets.add(chosen.candidate.offset)
+
+
+def _next_layout_break(
     text: str,
     selected: Iterable[BreakCandidate],
-    optional_candidates: list[BreakCandidate],
+    layout: list[RankedBreakpoint],
     selected_offsets: set[int],
     options: BreakOptions,
-) -> BreakCandidate | None:
+) -> RankedBreakpoint | None:
     boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
     boundaries = sorted(set(boundaries))
 
@@ -480,157 +535,76 @@ def _next_optional_break(
             continue
 
         local = [
-            candidate
-            for candidate in optional_candidates
-            if start < candidate.offset < end
-            and candidate.offset not in selected_offsets
-            and _valid_fragment(text, candidate.offset, start, end, options)
+            ranked
+            for ranked in layout
+            if _eligible_breakpoint(text, ranked, start, end, selected_offsets, options)
         ]
         if not local:
             continue
 
         target = start + options.target_segment_chars
-        return sorted(local, key=lambda candidate: _optional_candidate_rank(candidate, target))[0]
+        return sorted(
+            local,
+            key=lambda ranked: _breakpoint_rank(
+                ranked,
+                text,
+                start,
+                target,
+                options,
+            ),
+        )[0]
 
     return None
 
 
-def _optional_candidate_rank(candidate: BreakCandidate, target: int) -> tuple[int, float, int, int]:
-    return (
-        -OPTIONAL_KIND_PRIORITY.get(candidate.kind, 0),
-        -candidate.confidence,
-        abs(candidate.offset - target),
-        candidate.offset,
+def _eligible_breakpoint(
+    text: str,
+    ranked: RankedBreakpoint,
+    start: int,
+    end: int,
+    selected_offsets: set[int],
+    options: BreakOptions,
+) -> bool:
+    offset = ranked.candidate.offset
+    if offset in selected_offsets or offset <= start or offset >= end:
+        return False
+
+    return not ranked.require_min_fragment or _valid_fragment(
+        text,
+        offset,
+        start,
+        end,
+        options,
     )
+
+
+def _breakpoint_rank(
+    ranked: RankedBreakpoint,
+    text: str,
+    start: int,
+    target: int,
+    options: BreakOptions,
+) -> tuple[float, float, float, float, float]:
+    candidate = ranked.candidate
+    if ranked.level == LAYOUT_LEVEL_SEMANTIC:
+        return (
+            ranked.level,
+            -OPTIONAL_KIND_PRIORITY.get(candidate.kind, 0),
+            -candidate.confidence,
+            abs(candidate.offset - target),
+            candidate.offset,
+        )
+
+    left_len = len(text[start : candidate.offset].strip())
+    if left_len <= options.target_segment_chars:
+        return (ranked.level, 0, -left_len, candidate.offset, 0)
+    return (ranked.level, 1, left_len, candidate.offset, 0)
 
 
 def _valid_fragment(text: str, offset: int, start: int, end: int, options: BreakOptions) -> bool:
     left = text[start:offset].strip()
     right = text[offset:end].strip()
     return len(left) >= options.min_clause_chars and len(right) >= options.min_clause_chars
-
-
-def _add_strict_candidate_breaks(
-    text: str,
-    selected: list[BreakCandidate],
-    candidates: list[BreakCandidate],
-    options: BreakOptions,
-) -> None:
-    selected_offsets = {candidate.offset for candidate in selected}
-
-    while True:
-        boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
-        boundaries = sorted(set(boundaries))
-
-        for start, end in zip(boundaries, boundaries[1:], strict=False):
-            if len(text[start:end].strip()) <= options.target_segment_chars:
-                continue
-
-            candidate = _strict_candidate_break(
-                text,
-                start,
-                end,
-                candidates,
-                selected_offsets,
-                options,
-            )
-            if candidate is None:
-                continue
-
-            selected.append(candidate)
-            selected_offsets.add(candidate.offset)
-            break
-        else:
-            return
-
-
-def _strict_candidate_break(
-    text: str,
-    start: int,
-    end: int,
-    candidates: list[BreakCandidate],
-    selected_offsets: set[int],
-    options: BreakOptions,
-) -> BreakCandidate | None:
-    local = [
-        candidate
-        for candidate in candidates
-        if start < candidate.offset < end and candidate.offset not in selected_offsets
-    ]
-    if not local:
-        return None
-
-    before_target = [
-        candidate
-        for candidate in local
-        if len(text[start : candidate.offset].strip()) <= options.target_segment_chars
-    ]
-    if before_target:
-        return max(
-            before_target,
-            key=lambda candidate: len(text[start : candidate.offset].strip()),
-        )
-
-    return min(local, key=lambda candidate: candidate.offset)
-
-
-def _add_strict_word_breaks(
-    text: str,
-    selected: list[BreakCandidate],
-    options: BreakOptions,
-    *,
-    protected_spans: tuple[tuple[int, int], ...] = (),
-) -> None:
-    while True:
-        boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
-        boundaries = sorted(set(boundaries))
-
-        for start, end in zip(boundaries, boundaries[1:], strict=False):
-            if len(text[start:end].strip()) <= options.target_segment_chars:
-                continue
-
-            offset = _strict_word_break_offset(
-                text,
-                start,
-                end,
-                options,
-                protected_spans=protected_spans,
-            )
-            if offset is None:
-                continue
-
-            selected.append(
-                BreakCandidate(
-                    offset=offset,
-                    kind="word",
-                    confidence=0.0,
-                    reason="strict word boundary",
-                )
-            )
-            break
-        else:
-            return
-
-
-def _strict_word_break_offset(
-    text: str,
-    start: int,
-    end: int,
-    options: BreakOptions,
-    *,
-    protected_spans: tuple[tuple[int, int], ...] = (),
-) -> int | None:
-    fallback: int | None = None
-    before_target: int | None = None
-
-    for offset in _word_boundary_offsets(text, start, end, protected_spans):
-        if fallback is None:
-            fallback = offset
-        if len(text[start:offset].strip()) > options.target_segment_chars:
-            break
-        before_target = offset
-
-    return before_target or fallback
 
 
 def _word_boundary_offsets(
