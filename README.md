@@ -9,6 +9,7 @@ and never edit files in place.
 The default mode keeps sentence boundaries
 and adds conservative clause breaks inside long sentences.
 It is not a width-based wrapper.
+Use phrase mode when you want more breaks inside long sentences.
 
 ## Installation
 
@@ -40,6 +41,12 @@ Use sentence-only mode:
 
 ```sh
 sembrr --mode sentence < notes.md
+```
+
+Use phrase mode for more aggressive breaks:
+
+```sh
+sembrr --mode phrase < notes.md
 ```
 
 ## Development

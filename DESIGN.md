@@ -84,8 +84,8 @@ and dependency labels.
 The default model is a project dependency.
 Other requested models are hard runtime requirements.
 
-Clause mode requires a model with the parser pipeline enabled,
-because clause candidates depend on POS tags and dependency labels.
+Clause and phrase modes require a model with the parser pipeline enabled,
+because their candidates depend on POS tags and dependency labels.
 
 spaCy cold start dominates short interactive runs.
 Importing spaCy and loading the model costs far more than formatting
@@ -106,6 +106,7 @@ Candidate discovery uses projected prose and spaCy tokens.
 It marks sentence boundaries as mandatory,
 and it marks semicolon, colon, dash,
 and dependency-based clause boundaries as optional.
+Phrase mode also marks selected phrase boundaries as optional.
 
 Candidate selection uses source offsets.
 Segment length checks include Markdown marker characters,
@@ -148,6 +149,21 @@ Rejected candidates:
 - Inside URLs or paths.
 - Inside numbers or versions.
 - Near very short fragments.
+
+## Phrase Mode
+
+Phrase mode adds more breaks inside long sentences.
+It keeps clause mode behavior
+and adds weaker phrase-level candidates.
+
+Accepted phrase candidates:
+
+- Before example phrases such as `like ...` or `including ...`.
+- Before coordinated gerund phrases such as `or splitting ...`.
+
+Phrase candidates are opt-in because they are not full clauses.
+They still must satisfy the same fragment-length checks as clause candidates.
+They are not added inside matched parenthetical spans.
 
 ## Defaults
 

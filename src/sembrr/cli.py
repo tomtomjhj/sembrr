@@ -12,7 +12,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="sembrr",
         description="Format semantic line breaks from stdin to stdout.",
     )
-    parser.add_argument("--mode", choices=("sentence", "clause"), default="clause")
+    parser.add_argument("--mode", choices=("sentence", "clause", "phrase"), default="clause")
     parser.add_argument("--parser", choices=("markdown", "text"), default="markdown")
     parser.add_argument("--text", action="store_true", help="alias for --parser text")
     parser.add_argument("--model", default="en_core_web_sm", help="spaCy model name")

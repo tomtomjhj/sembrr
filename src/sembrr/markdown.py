@@ -277,7 +277,8 @@ def _format_projected_prose(
 ) -> str:
     sentence_breaks, optional_breaks = engine.break_candidates(
         projected.text,
-        include_clauses=options.mode == "clause",
+        include_clauses=options.mode in {"clause", "phrase"},
+        include_phrases=options.mode == "phrase",
     )
     source_sentence_breaks = [
         replace(candidate, offset=projected.source_offset(candidate.offset))

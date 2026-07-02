@@ -62,17 +62,25 @@ class SentenceEngine:
         text: str,
         *,
         include_clauses: bool,
+        include_phrases: bool = False,
     ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
         if not text:
             return [], []
 
-        if include_clauses and not self._has_parser:
-            raise SentenceEngineError(f"clause mode requires a spaCy parser model: {self._model}")
+        if (include_clauses or include_phrases) and not self._has_parser:
+            raise SentenceEngineError(
+                f"optional breaks require a spaCy parser model: {self._model}"
+            )
 
         doc = self._nlp(text)
         sentence_breaks = self._spacy_sentence_candidates_from_doc(text, doc)
-        clause_breaks = _spacy_clause_candidates(text, doc) if include_clauses else []
-        return sentence_breaks, clause_breaks
+        optional_breaks = _spacy_optional_candidates(
+            text,
+            doc,
+            include_clauses=include_clauses,
+            include_phrases=include_phrases,
+        )
+        return sentence_breaks, optional_breaks
 
     def _has_sentence_boundaries(self) -> bool:
         return any(self._nlp.has_pipe(name) for name in ("parser", "senter", "sentencizer"))
@@ -115,7 +123,7 @@ SUBORDINATORS = {
 }
 RELATIVE_MARKERS = {"that", "which", "who", "whom", "whose"}
 DASHES = {"--", "—", "–"}
-CLAUSE_KIND_PRIORITY = {
+OPTIONAL_KIND_PRIORITY = {
     "parenthetical-start": 5,
     "parenthetical-end": 5,
     "semicolon": 5,
@@ -124,7 +132,24 @@ CLAUSE_KIND_PRIORITY = {
     "subordinate": 2,
     "coordinate": 2,
     "relative": 1,
+    "example_phrase": 0,
+    "gerund_coordinate": 0,
 }
+
+
+def _spacy_optional_candidates(
+    text: str,
+    doc: Any,
+    *,
+    include_clauses: bool,
+    include_phrases: bool,
+) -> list[BreakCandidate]:
+    candidates: list[BreakCandidate] = []
+    if include_clauses:
+        candidates.extend(_spacy_clause_candidates(text, doc))
+    if include_phrases:
+        candidates.extend(_spacy_phrase_candidates(text, doc))
+    return _dedupe_candidates(candidates, len(text))
 
 
 def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
@@ -228,10 +253,47 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
     ]
 
 
+def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
+    tokens: list[Any] = list(doc)
+    parenthesis_pairs = _parenthesis_pairs(tokens)
+    parenthesis_depths = _parenthesis_depths(tokens, parenthesis_pairs)
+    candidates: list[BreakCandidate] = []
+
+    for index, token in enumerate(tokens):
+        if parenthesis_depths[index] > 0:
+            continue
+
+        lower = str(token.lower_)
+
+        if _is_example_phrase_marker(token):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="example_phrase",
+                    confidence=0.55,
+                    reason=f"spaCy example phrase marker {lower}",
+                )
+            )
+            continue
+
+        if _is_gerund_coordinate_marker(tokens, index):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="gerund_coordinate",
+                    confidence=0.55,
+                    reason=f"spaCy gerund coordinate marker {lower}",
+                )
+            )
+
+    return _dedupe_candidates(candidates, len(text))
+
+
 def format_prose(text: str, engine: SentenceEngine, options: BreakOptions) -> str:
     sentence_breaks, optional_breaks = engine.break_candidates(
         text,
-        include_clauses=options.mode == "clause",
+        include_clauses=options.mode in {"clause", "phrase"},
+        include_phrases=options.mode == "phrase",
     )
     selected = select_breaks(text, sentence_breaks, optional_breaks, options)
     return apply_breaks(text, selected)
@@ -245,7 +307,7 @@ def select_breaks(
 ) -> list[BreakCandidate]:
     selected = sorted(mandatory, key=lambda candidate: candidate.offset)
 
-    if options.mode != "clause":
+    if options.mode not in {"clause", "phrase"}:
         return selected
 
     optional_candidates = [
@@ -256,7 +318,9 @@ def select_breaks(
     selected_offsets = {candidate.offset for candidate in selected}
 
     while True:
-        chosen = _next_clause_break(text, selected, optional_candidates, selected_offsets, options)
+        chosen = _next_optional_break(
+            text, selected, optional_candidates, selected_offsets, options
+        )
         if chosen is None:
             break
 
@@ -298,7 +362,7 @@ def _after_closing_punctuation(text: str, offset: int) -> int:
     return offset
 
 
-def _next_clause_break(
+def _next_optional_break(
     text: str,
     selected: Iterable[BreakCandidate],
     optional_candidates: list[BreakCandidate],
@@ -324,14 +388,14 @@ def _next_clause_break(
             continue
 
         target = start + options.target_segment_chars
-        return sorted(local, key=lambda candidate: _clause_candidate_rank(candidate, target))[0]
+        return sorted(local, key=lambda candidate: _optional_candidate_rank(candidate, target))[0]
 
     return None
 
 
-def _clause_candidate_rank(candidate: BreakCandidate, target: int) -> tuple[int, float, int, int]:
+def _optional_candidate_rank(candidate: BreakCandidate, target: int) -> tuple[int, float, int, int]:
     return (
-        -CLAUSE_KIND_PRIORITY.get(candidate.kind, 0),
+        -OPTIONAL_KIND_PRIORITY.get(candidate.kind, 0),
         -candidate.confidence,
         abs(candidate.offset - target),
         candidate.offset,
@@ -420,6 +484,28 @@ def _is_relative_marker(token: Any, text: str) -> bool:
         "dobj",
         "pobj",
     }
+
+
+def _is_example_phrase_marker(token: Any) -> bool:
+    return str(token.lower_) in {"like", "including"} and str(token.pos_) == "ADP"
+
+
+def _is_gerund_coordinate_marker(tokens: list[Any], index: int) -> bool:
+    token = tokens[index]
+    if str(token.lower_) not in {"and", "or"} or str(token.dep_) != "cc":
+        return False
+
+    next_token = _next_non_punctuation_token(tokens, index)
+    return (
+        next_token is not None and str(next_token.tag_) == "VBG" and str(next_token.dep_) == "conj"
+    )
+
+
+def _next_non_punctuation_token(tokens: list[Any], index: int) -> Any | None:
+    for token in tokens[index + 1 :]:
+        if str(token.pos_) != "PUNCT":
+            return token
+    return None
 
 
 def _has_comma_before(text: str, offset: int) -> bool:

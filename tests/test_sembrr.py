@@ -11,6 +11,7 @@ from sembrr.breaks import (
     SentenceEngine,
     SentenceEngineError,
     _spacy_clause_candidates,
+    _spacy_phrase_candidates,
     format_prose,
 )
 from sembrr.cli import main
@@ -23,10 +24,13 @@ class FixtureEngine:
         text: str,
         *,
         include_clauses: bool,
+        include_phrases: bool = False,
     ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
         sentence_breaks = self.sentence_candidates(text)
-        clause_breaks = self.clause_candidates(text) if include_clauses else []
-        return sentence_breaks, clause_breaks
+        optional_breaks = self.clause_candidates(text) if include_clauses else []
+        if include_phrases:
+            optional_breaks.extend(self.phrase_candidates(text))
+        return sentence_breaks, optional_breaks
 
     def sentence_candidates(self, text: str) -> list[BreakCandidate]:
         candidates: list[BreakCandidate] = []
@@ -50,6 +54,33 @@ class FixtureEngine:
                 )
 
             index = offset + 1
+
+        return candidates
+
+    def phrase_candidates(self, text: str) -> list[BreakCandidate]:
+        candidates: list[BreakCandidate] = []
+
+        like = text.find(" like ")
+        if like >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=like + 1,
+                    kind="example_phrase",
+                    confidence=0.55,
+                    reason="fixture example phrase boundary",
+                )
+            )
+
+        or_splitting = text.find(" or splitting")
+        if or_splitting >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=or_splitting + 1,
+                    kind="gerund_coordinate",
+                    confidence=0.55,
+                    reason="fixture gerund coordinate boundary",
+                )
+            )
 
         return candidates
 
@@ -93,9 +124,14 @@ class RecordingEngine(FixtureEngine):
         text: str,
         *,
         include_clauses: bool,
+        include_phrases: bool = False,
     ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
         self.seen_text.append(text)
-        return super().break_candidates(text, include_clauses=include_clauses)
+        return super().break_candidates(
+            text,
+            include_clauses=include_clauses,
+            include_phrases=include_phrases,
+        )
 
 
 class FakeToken:
@@ -328,6 +364,34 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
+    def test_phrase_mode_adds_phrase_breaks(self) -> None:
+        source = (
+            "Use it when it looks better than other options like colons and parentheses "
+            "or splitting into separate sentences."
+        )
+        expected = (
+            "Use it when it looks better than other options\n"
+            "like colons and parentheses\n"
+            "or splitting into separate sentences."
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_phrase_mode_formats_markdown(self) -> None:
+        source = (
+            "**Use it** when it looks better than other options like colons and parentheses "
+            "or splitting into separate sentences.\n"
+        )
+        expected = (
+            "**Use it** when it looks better than other options\n"
+            "like colons and parentheses\n"
+            "or splitting into separate sentences.\n"
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
+
+        self.assertEqual(format_markdown(source, ENGINE, options), expected)
+
     def test_clause_mode_discovers_spacy_subordinate_boundary(self) -> None:
         source = (
             "The writer keeps context visible "
@@ -443,6 +507,78 @@ class SembrrTests(unittest.TestCase):
         candidates = _spacy_clause_candidates(source, tokens)
 
         self.assertIn(("semicolon", source.index(";") + 1), _candidate_summary(candidates))
+
+    def test_phrase_mode_discovers_spacy_phrase_boundaries(self) -> None:
+        source = (
+            "Use it when it looks better than other options like colons and parentheses "
+            "or splitting into separate sentences."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("Use", "VERB", "ROOT", "VB"),
+                ("it", "PRON", "dobj", "PRP"),
+                ("when", "SCONJ", "advmod", "WRB"),
+                ("it", "PRON", "nsubj", "PRP"),
+                ("looks", "VERB", "advcl", "VBZ"),
+                ("better", "ADJ", "acomp", "JJR"),
+                ("than", "ADP", "prep", "IN"),
+                ("other", "ADJ", "amod", "JJ"),
+                ("options", "NOUN", "pobj", "NNS"),
+                ("like", "ADP", "prep", "IN"),
+                ("colons", "NOUN", "pobj", "NNS"),
+                ("and", "CCONJ", "cc", "CC"),
+                ("parentheses", "NOUN", "conj", "NNS"),
+                ("or", "CCONJ", "cc", "CC"),
+                ("splitting", "VERB", "conj", "VBG"),
+                ("into", "ADP", "prep", "IN"),
+                ("separate", "ADJ", "amod", "JJ"),
+                ("sentences", "NOUN", "pobj", "NNS"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_phrase_candidates(source, tokens)
+        self.assertIn(("example_phrase", source.index("like")), _candidate_summary(candidates))
+        self.assertIn(
+            ("gerund_coordinate", source.index("or")),
+            _candidate_summary(candidates),
+        )
+
+    def test_phrase_mode_avoids_parenthetical_phrase_boundaries(self) -> None:
+        source = (
+            "Authors keep a guide (including tricky examples or splitting extra cases) "
+            "before readers use it."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("Authors", "NOUN", "nsubj", "NNS"),
+                ("keep", "VERB", "ROOT", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("guide", "NOUN", "dobj", "NN"),
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("including", "ADP", "prep", "VBG"),
+                ("tricky", "ADJ", "amod", "JJ"),
+                ("examples", "NOUN", "pobj", "NNS"),
+                ("or", "CCONJ", "cc", "CC"),
+                ("splitting", "VERB", "conj", "VBG"),
+                ("extra", "ADJ", "amod", "JJ"),
+                ("cases", "NOUN", "dobj", "NNS"),
+                (")", "PUNCT", "punct", "-RRB-"),
+                ("before", "SCONJ", "mark", "IN"),
+                ("readers", "NOUN", "nsubj", "NNS"),
+                ("use", "VERB", "advcl", "VBP"),
+                ("it", "PRON", "dobj", "PRP"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_phrase_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertNotIn(("example_phrase", source.index("including")), summary)
+        self.assertNotIn(("gerund_coordinate", source.index("or")), summary)
 
     def test_preserves_tree_sitter_inline_spans(self) -> None:
         source = "Use `경로/a.b.py`. Visit <https://x.y/z>. Then see http://x.y/z.\n"
