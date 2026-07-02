@@ -13,6 +13,7 @@ from sembrr.breaks import (
     _spacy_clause_candidates,
     _spacy_phrase_candidates,
     format_prose,
+    select_breaks,
 )
 from sembrr.cli import main
 from sembrr.markdown import format_markdown, format_text
@@ -82,6 +83,17 @@ class FixtureEngine:
                 )
             )
 
+        finite_coordinate = text.find(" and every ")
+        if finite_coordinate >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=finite_coordinate + 1,
+                    kind="finite_coordinate",
+                    confidence=0.65,
+                    reason="fixture finite coordinate boundary",
+                )
+            )
+
         return candidates
 
     def clause_candidates(self, text: str) -> list[BreakCandidate]:
@@ -106,6 +118,17 @@ class FixtureEngine:
                     kind="coordinate",
                     confidence=0.78,
                     reason="fixture coordinate boundary",
+                )
+            )
+
+        comma_so = text.find(", so ")
+        if comma_so >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=comma_so + 2,
+                    kind="coordinate",
+                    confidence=0.78,
+                    reason="fixture result coordinate boundary",
                 )
             )
 
@@ -364,6 +387,15 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
+    def test_clause_mode_breaks_comma_led_result_clause(self) -> None:
+        source = "The renderer preserves the cached value, so the scheduler evaluates it unchanged."
+        expected = (
+            "The renderer preserves the cached value,\nso the scheduler evaluates it unchanged."
+        )
+        options = BreakOptions(mode="clause", target_segment_chars=60, min_clause_chars=24)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
     def test_phrase_mode_adds_phrase_breaks(self) -> None:
         source = (
             "Use it when it looks better than other options like colons and parentheses "
@@ -377,6 +409,42 @@ class SembrrTests(unittest.TestCase):
         options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_phrase_mode_adds_finite_coordinate_breaks(self) -> None:
+        source = (
+            "The runner keeps the intermediate output stable and every downstream "
+            "check remains green."
+        )
+        expected = (
+            "The runner keeps the intermediate output stable\n"
+            "and every downstream check remains green."
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_phrase_mode_prefers_finite_coordinate_over_short_parenthetical(self) -> None:
+        source = (
+            "The runner applies the output unchanged and every downstream gate "
+            "(shape, timing) remains green."
+        )
+        finite_coordinate = BreakCandidate(
+            offset=source.index("and"),
+            kind="finite_coordinate",
+            confidence=0.65,
+            reason="test finite coordinate boundary",
+        )
+        parenthetical = BreakCandidate(
+            offset=source.index("("),
+            kind="parenthetical-start",
+            confidence=0.94,
+            reason="test parenthetical boundary",
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=80, min_clause_chars=24)
+
+        selected = select_breaks(source, [], [finite_coordinate, parenthetical], options)
+
+        self.assertEqual(selected, [finite_coordinate])
 
     def test_phrase_mode_formats_markdown(self) -> None:
         source = (
@@ -445,6 +513,32 @@ class SembrrTests(unittest.TestCase):
 
         candidates = _spacy_clause_candidates(source, tokens)
         self.assertIn(("coordinate", source.index("and")), _candidate_summary(candidates))
+
+    def test_clause_mode_discovers_spacy_result_so_boundary(self) -> None:
+        source = "The formatter preserves the cache, so the runner evaluates the result later."
+        tokens = _fake_doc(
+            source,
+            [
+                ("The", "DET", "det", "DT"),
+                ("formatter", "NOUN", "nsubj", "NN"),
+                ("preserves", "VERB", "ROOT", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("cache", "NOUN", "dobj", "NN"),
+                (",", "PUNCT", "punct", ","),
+                ("so", "ADV", "advmod", "RB"),
+                ("the", "DET", "det", "DT"),
+                ("runner", "NOUN", "nsubj", "NN"),
+                ("evaluates", "VERB", "conj", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("result", "NOUN", "dobj", "NN"),
+                ("later", "ADV", "advmod", "RB"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+
+        self.assertIn(("coordinate", source.index("so")), _candidate_summary(candidates))
 
     def test_clause_mode_prefers_parenthetical_boundaries(self) -> None:
         source = (
@@ -542,6 +636,38 @@ class SembrrTests(unittest.TestCase):
         self.assertIn(("example_phrase", source.index("like")), _candidate_summary(candidates))
         self.assertIn(
             ("gerund_coordinate", source.index("or")),
+            _candidate_summary(candidates),
+        )
+
+    def test_phrase_mode_discovers_spacy_finite_coordinate_boundary(self) -> None:
+        source = (
+            "The runner keeps the intermediate output stable and every downstream "
+            "check remains green."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("The", "DET", "det", "DT"),
+                ("runner", "NOUN", "nsubj", "NN"),
+                ("keeps", "VERB", "ROOT", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("intermediate", "ADJ", "amod", "JJ"),
+                ("output", "NOUN", "dobj", "NN"),
+                ("stable", "ADJ", "acomp", "JJ"),
+                ("and", "CCONJ", "cc", "CC"),
+                ("every", "DET", "det", "DT"),
+                ("downstream", "ADJ", "amod", "JJ"),
+                ("check", "NOUN", "nsubj", "NN"),
+                ("remains", "VERB", "conj", "VBZ"),
+                ("green", "ADJ", "acomp", "JJ"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_phrase_candidates(source, tokens)
+
+        self.assertIn(
+            ("finite_coordinate", source.index("and")),
             _candidate_summary(candidates),
         )
 

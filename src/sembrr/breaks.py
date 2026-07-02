@@ -124,6 +124,7 @@ SUBORDINATORS = {
 RELATIVE_MARKERS = {"that", "which", "who", "whom", "whose"}
 DASHES = {"--", "—", "–"}
 OPTIONAL_KIND_PRIORITY = {
+    "finite_coordinate": 6,
     "parenthetical-start": 5,
     "parenthetical-end": 5,
     "semicolon": 5,
@@ -213,7 +214,7 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
             )
             continue
 
-        if _is_coordinate_marker(token, text):
+        if _is_coordinate_marker(tokens, index, text):
             candidates.append(
                 BreakCandidate(
                     offset=offset,
@@ -283,6 +284,17 @@ def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
                     kind="gerund_coordinate",
                     confidence=0.55,
                     reason=f"spaCy gerund coordinate marker {lower}",
+                )
+            )
+            continue
+
+        if _is_finite_coordinate_marker(tokens, index):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="finite_coordinate",
+                    confidence=0.65,
+                    reason=f"spaCy finite coordinate marker {lower}",
                 )
             )
 
@@ -461,12 +473,27 @@ def _parenthesis_depths(tokens: list[Any], parenthesis_pairs: dict[int, int]) ->
     return depths
 
 
-def _is_coordinate_marker(token: Any, text: str) -> bool:
-    return (
-        str(token.lower_) in COORDINATORS
-        and str(token.dep_) == "cc"
-        and _has_comma_before(text, int(token.idx))
-    )
+def _is_coordinate_marker(tokens: list[Any], index: int, text: str) -> bool:
+    token = tokens[index]
+    if str(token.lower_) not in COORDINATORS or not _has_comma_before(text, int(token.idx)):
+        return False
+
+    if str(token.dep_) == "cc":
+        return True
+
+    return _is_result_so_marker(tokens, index)
+
+
+def _is_result_so_marker(tokens: list[Any], index: int) -> bool:
+    token = tokens[index]
+    if str(token.lower_) != "so" or str(token.pos_) not in {"ADV", "SCONJ", "CCONJ"}:
+        return False
+
+    verb_index = _next_finite_verb_index(tokens, index)
+    if verb_index is None:
+        return False
+
+    return _has_nominal_subject(tokens, index + 1, verb_index + 1)
 
 
 def _is_subordinate_marker(token: Any) -> bool:
@@ -499,6 +526,32 @@ def _is_gerund_coordinate_marker(tokens: list[Any], index: int) -> bool:
     return (
         next_token is not None and str(next_token.tag_) == "VBG" and str(next_token.dep_) == "conj"
     )
+
+
+def _is_finite_coordinate_marker(tokens: list[Any], index: int) -> bool:
+    token = tokens[index]
+    if str(token.lower_) not in {"and", "or"} or str(token.dep_) != "cc":
+        return False
+
+    verb_index = _next_finite_verb_index(tokens, index)
+    if verb_index is None:
+        return False
+
+    return _has_nominal_subject(tokens, index + 1, verb_index + 1)
+
+
+def _next_finite_verb_index(tokens: list[Any], index: int) -> int | None:
+    for offset, token in enumerate(tokens[index + 1 :], start=index + 1):
+        token_text = str(token.text)
+        if token_text in {".", "!", "?", ";", ":"}:
+            return None
+        if _is_finite_verb(token):
+            return offset
+    return None
+
+
+def _has_nominal_subject(tokens: list[Any], start: int, end: int) -> bool:
+    return any(str(token.dep_) in {"nsubj", "nsubjpass", "csubj"} for token in tokens[start:end])
 
 
 def _next_non_punctuation_token(tokens: list[Any], index: int) -> Any | None:

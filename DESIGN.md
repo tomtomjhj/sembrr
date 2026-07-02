@@ -140,6 +140,7 @@ Accepted candidates:
 - After colons that introduce an explanation.
 - Before or after matched parenthetical spans.
 - Before coordinating conjunctions when both sides contain finite verbs.
+- Before comma-led result clauses such as `, so ...`.
 - Before subordinate clauses when both sides are long enough.
 
 Rejected candidates:
@@ -160,6 +161,8 @@ Accepted phrase candidates:
 
 - Before example phrases such as `like ...` or `including ...`.
 - Before coordinated gerund phrases such as `or splitting ...`.
+- Before bare coordinating conjunctions
+  when the following conjunct has its own subject and finite verb.
 
 Phrase candidates are opt-in because they are not full clauses.
 They still must satisfy the same fragment-length checks as clause candidates.
