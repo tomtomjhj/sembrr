@@ -382,6 +382,68 @@ class SembrrTests(unittest.TestCase):
         candidates = _spacy_clause_candidates(source, tokens)
         self.assertIn(("coordinate", source.index("and")), _candidate_summary(candidates))
 
+    def test_clause_mode_prefers_parenthetical_boundaries(self) -> None:
+        source = (
+            "Authors ship a summary (builders create a plan: runners check it) "
+            "before readers use it."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("Authors", "NOUN", "nsubj", "NNS"),
+                ("ship", "VERB", "ROOT", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("summary", "NOUN", "dobj", "NN"),
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("builders", "NOUN", "nsubj", "NNS"),
+                ("create", "VERB", "relcl", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("plan", "NOUN", "dobj", "NN"),
+                (":", "PUNCT", "punct", ":"),
+                ("runners", "NOUN", "nsubj", "NNS"),
+                ("check", "VERB", "conj", "VBP"),
+                ("it", "PRON", "dobj", "PRP"),
+                (")", "PUNCT", "punct", "-RRB-"),
+                ("before", "SCONJ", "mark", "IN"),
+                ("readers", "NOUN", "nsubj", "NNS"),
+                ("use", "VERB", "advcl", "VBP"),
+                ("it", "PRON", "dobj", "PRP"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertIn(("parenthetical-start", source.index("(")), summary)
+        self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
+        self.assertNotIn(("colon", source.index(":") + 1), summary)
+
+    def test_clause_mode_ignores_unmatched_parenthesis_for_depth(self) -> None:
+        source = "Authors ship a draft (temporary note; readers review the result."
+        tokens = _fake_doc(
+            source,
+            [
+                ("Authors", "NOUN", "nsubj", "NNS"),
+                ("ship", "VERB", "ROOT", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("draft", "NOUN", "dobj", "NN"),
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("temporary", "ADJ", "amod", "JJ"),
+                ("note", "NOUN", "dobj", "NN"),
+                (";", "PUNCT", "punct", ":"),
+                ("readers", "NOUN", "nsubj", "NNS"),
+                ("review", "VERB", "conj", "VBP"),
+                ("the", "DET", "det", "DT"),
+                ("result", "NOUN", "dobj", "NN"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+
+        self.assertIn(("semicolon", source.index(";") + 1), _candidate_summary(candidates))
+
     def test_preserves_tree_sitter_inline_spans(self) -> None:
         source = "Use `경로/a.b.py`. Visit <https://x.y/z>. Then see http://x.y/z.\n"
         expected = "Use `경로/a.b.py`.\nVisit <https://x.y/z>.\nThen see http://x.y/z.\n"

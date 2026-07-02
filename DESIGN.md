@@ -137,12 +137,14 @@ Accepted candidates:
 - After semicolons.
 - Around dash interruptions.
 - After colons that introduce an explanation.
+- Before or after matched parenthetical spans.
 - Before coordinating conjunctions when both sides contain finite verbs.
 - Before subordinate clauses when both sides are long enough.
 
 Rejected candidates:
 
 - Inside atomic source spans.
+- Inside matched parenthetical spans.
 - Inside URLs or paths.
 - Inside numbers or versions.
 - Near very short fragments.

@@ -116,6 +116,8 @@ SUBORDINATORS = {
 RELATIVE_MARKERS = {"that", "which", "who", "whom", "whose"}
 DASHES = {"--", "—", "–"}
 CLAUSE_KIND_PRIORITY = {
+    "parenthetical-start": 5,
+    "parenthetical-end": 5,
     "semicolon": 5,
     "colon": 4,
     "dash": 4,
@@ -127,12 +129,42 @@ CLAUSE_KIND_PRIORITY = {
 
 def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
     tokens: list[Any] = list(doc)
+    parenthesis_pairs = _parenthesis_pairs(tokens)
+    parenthesis_depths = _parenthesis_depths(tokens, parenthesis_pairs)
     candidates: list[BreakCandidate] = []
 
-    for token in tokens:
+    for index, token in enumerate(tokens):
         token_text = str(token.text)
         lower = str(token.lower_)
         offset = int(token.idx)
+        parenthesis_depth = parenthesis_depths[index]
+
+        if token_text == "(" and index in parenthesis_pairs and parenthesis_depth == 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=offset,
+                    kind="parenthetical-start",
+                    confidence=0.94,
+                    reason="spaCy parenthetical start",
+                )
+            )
+            continue
+
+        if token_text == ")" and index in parenthesis_pairs and parenthesis_depth == 1:
+            close_offset = _token_end(token)
+            if close_offset < len(text) and text[close_offset].isspace():
+                candidates.append(
+                    BreakCandidate(
+                        offset=close_offset,
+                        kind="parenthetical-end",
+                        confidence=0.94,
+                        reason="spaCy parenthetical end",
+                    )
+                )
+            continue
+
+        if parenthesis_depth > 0:
+            continue
 
         if token_text in {";", ":"}:
             candidates.append(
@@ -332,6 +364,37 @@ def _token_index_at(tokens: list[Any], offset: int) -> int:
         if int(token.idx) >= offset:
             return index
     return len(tokens)
+
+
+def _parenthesis_pairs(tokens: list[Any]) -> dict[int, int]:
+    stack: list[int] = []
+    pairs: dict[int, int] = {}
+
+    for index, token in enumerate(tokens):
+        token_text = str(token.text)
+        if token_text == "(":
+            stack.append(index)
+        elif token_text == ")" and stack:
+            open_index = stack.pop()
+            pairs[open_index] = index
+            pairs[index] = open_index
+
+    return pairs
+
+
+def _parenthesis_depths(tokens: list[Any], parenthesis_pairs: dict[int, int]) -> list[int]:
+    depths: list[int] = []
+    depth = 0
+
+    for index, token in enumerate(tokens):
+        token_text = str(token.text)
+        depths.append(depth)
+        if token_text == "(" and index in parenthesis_pairs:
+            depth += 1
+        elif token_text == ")" and index in parenthesis_pairs and depth > 0:
+            depth -= 1
+
+    return depths
 
 
 def _is_coordinate_marker(token: Any, text: str) -> bool:
