@@ -366,8 +366,8 @@ def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
 def format_prose(text: str, engine: SentenceEngine, options: BreakOptions) -> str:
     sentence_breaks, optional_breaks = engine.break_candidates(
         text,
-        include_clauses=options.mode in {"clause", "phrase"},
-        include_phrases=options.mode == "phrase",
+        include_clauses=options.mode in {"clause", "phrase", "strict"},
+        include_phrases=options.mode in {"phrase", "strict"},
     )
     selected = select_breaks(text, sentence_breaks, optional_breaks, options)
     return apply_breaks(text, selected)
@@ -378,10 +378,12 @@ def select_breaks(
     mandatory: Iterable[BreakCandidate],
     optional: Iterable[BreakCandidate],
     options: BreakOptions,
+    *,
+    protected_spans: Iterable[tuple[int, int]] = (),
 ) -> list[BreakCandidate]:
     selected = sorted(mandatory, key=lambda candidate: candidate.offset)
 
-    if options.mode not in {"clause", "phrase"}:
+    if options.mode not in {"clause", "phrase", "strict"}:
         return selected
 
     optional_candidates = [
@@ -400,6 +402,14 @@ def select_breaks(
 
         selected.append(chosen)
         selected_offsets.add(chosen.offset)
+
+    if options.mode == "strict":
+        _add_strict_word_breaks(
+            text,
+            selected,
+            options,
+            protected_spans=tuple(protected_spans),
+        )
 
     return sorted(selected, key=lambda candidate: candidate.offset)
 
@@ -480,6 +490,95 @@ def _valid_fragment(text: str, offset: int, start: int, end: int, options: Break
     left = text[start:offset].strip()
     right = text[offset:end].strip()
     return len(left) >= options.min_clause_chars and len(right) >= options.min_clause_chars
+
+
+def _add_strict_word_breaks(
+    text: str,
+    selected: list[BreakCandidate],
+    options: BreakOptions,
+    *,
+    protected_spans: tuple[tuple[int, int], ...] = (),
+) -> None:
+    while True:
+        boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
+        boundaries = sorted(set(boundaries))
+
+        for start, end in zip(boundaries, boundaries[1:], strict=False):
+            if len(text[start:end].strip()) <= options.target_segment_chars:
+                continue
+
+            offset = _strict_word_break_offset(
+                text,
+                start,
+                end,
+                options,
+                protected_spans=protected_spans,
+            )
+            if offset is None:
+                continue
+
+            selected.append(
+                BreakCandidate(
+                    offset=offset,
+                    kind="word",
+                    confidence=0.0,
+                    reason="strict word boundary",
+                )
+            )
+            break
+        else:
+            return
+
+
+def _strict_word_break_offset(
+    text: str,
+    start: int,
+    end: int,
+    options: BreakOptions,
+    *,
+    protected_spans: tuple[tuple[int, int], ...] = (),
+) -> int | None:
+    fallback: int | None = None
+    before_target: int | None = None
+
+    for offset in _word_boundary_offsets(text, start, end, protected_spans):
+        if fallback is None:
+            fallback = offset
+        if len(text[start:offset].strip()) > options.target_segment_chars:
+            break
+        before_target = offset
+
+    return before_target or fallback
+
+
+def _word_boundary_offsets(
+    text: str,
+    start: int,
+    end: int,
+    protected_spans: tuple[tuple[int, int], ...],
+) -> Iterable[int]:
+    offset = start + 1
+    while offset < end:
+        if not text[offset].isspace():
+            offset += 1
+            continue
+
+        next_offset = offset + 1
+        while next_offset < end and text[next_offset].isspace():
+            next_offset += 1
+
+        if (
+            not text[offset - 1].isspace()
+            and next_offset < end
+            and not _inside_protected_span(offset, protected_spans)
+        ):
+            yield offset
+
+        offset = next_offset
+
+
+def _inside_protected_span(offset: int, protected_spans: tuple[tuple[int, int], ...]) -> bool:
+    return any(start < offset < end for start, end in protected_spans)
 
 
 def _dedupe_candidates(candidates: Iterable[BreakCandidate], text_len: int) -> list[BreakCandidate]:

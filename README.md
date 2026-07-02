@@ -48,6 +48,13 @@ Use clause mode for fewer breaks:
 sembrr --mode clause < notes.md
 ```
 
+Use strict mode to enforce `--target-segment-chars`
+at word boundaries when semantic breaks are not enough:
+
+```sh
+sembrr --mode strict --target-segment-chars 80 < notes.md
+```
+
 ## Development
 
 ```sh

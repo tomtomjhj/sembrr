@@ -37,6 +37,7 @@ class ProjectedText:
     source: str
     text: str
     source_offsets: tuple[int, ...]
+    protected_spans: tuple[tuple[int, int], ...] = ()
 
     def source_offset(self, offset: int) -> int:
         return self.source_offsets[offset]
@@ -129,6 +130,7 @@ def _project_text_from_tree(text: str, tree: Tree) -> ProjectedText:
         source=text,
         text="".join(pieces),
         source_offsets=tuple(source_offsets),
+        protected_spans=tuple(protected_spans),
     )
 
 

@@ -519,6 +519,27 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
+    def test_strict_mode_enforces_target_at_word_boundaries(self) -> None:
+        source = "Alpha beta gamma delta epsilon zeta eta."
+        expected = "Alpha beta gamma\ndelta epsilon\nzeta eta."
+        options = BreakOptions(mode="strict", target_segment_chars=16)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_strict_mode_preserves_oversized_markdown_atom(self) -> None:
+        source = (
+            "Read [an unusually long linked reference](https://example.com/some/long/path) "
+            "after words.\n"
+        )
+        expected = (
+            "Read\n"
+            "[an unusually long linked reference](https://example.com/some/long/path)\n"
+            "after words.\n"
+        )
+        options = BreakOptions(mode="strict", target_segment_chars=24)
+
+        self.assertEqual(format_markdown(source, ENGINE, options), expected)
+
     def test_clause_mode_discovers_spacy_subordinate_boundary(self) -> None:
         source = (
             "The writer keeps context visible "

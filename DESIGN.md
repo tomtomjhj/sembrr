@@ -84,7 +84,7 @@ and dependency labels.
 The default model is a project dependency.
 Other requested models are hard runtime requirements.
 
-Clause and phrase modes require a model with the parser pipeline enabled,
+Clause, phrase, and strict modes require a model with the parser pipeline enabled,
 because their candidates depend on POS tags and dependency labels.
 
 spaCy cold start dominates short interactive runs.
@@ -106,7 +106,8 @@ Candidate discovery uses projected prose and spaCy tokens.
 It marks sentence boundaries as mandatory,
 and it marks semicolon, colon, dash,
 and dependency-based clause boundaries as optional.
-Phrase mode also marks selected phrase boundaries as optional.
+Phrase and strict modes also mark selected phrase boundaries as optional.
+Strict mode can add word-boundary breaks after candidate selection.
 
 Candidate selection uses source offsets.
 Segment length checks include Markdown marker characters,
@@ -122,6 +123,10 @@ Candidate selection is deterministic and greedy:
 5. Prefer higher-confidence candidates of the same kind.
 6. Use distance from `target_segment_chars` as the final tiebreaker.
 7. Repeat until no over-target segment has a safe candidate.
+
+Strict mode then adds word-boundary breaks
+until all segments fit `target_segment_chars`
+or no word boundary remains.
 
 Sembrr is not a width-based wrapper.
 If a sentence is long and has no safe semantic break,
@@ -169,6 +174,14 @@ Accepted phrase candidates:
 Phrase candidates are lower-priority because they are not full clauses.
 They still must satisfy the same fragment-length checks as clause candidates.
 They are not added inside matched parenthetical spans.
+
+## Strict Mode
+
+Strict mode uses phrase mode candidates first.
+If any segment still exceeds `target_segment_chars`,
+it adds breaks at word boundaries.
+Protected Markdown atoms stay indivisible,
+so an atom longer than `target_segment_chars` can still produce a longer line.
 
 ## Defaults
 
