@@ -71,6 +71,8 @@ class SentenceEngine:
 
         doc = self._nlp(text)
         sentence_breaks = self._spacy_sentence_candidates_from_doc(text, doc)
+        sentence_breaks.extend(_markdown_closing_sentence_candidates(text))
+        sentence_breaks = _dedupe_candidates(sentence_breaks, len(text))
         clause_breaks = _spacy_clause_candidates(text, doc) if include_clauses else []
         return sentence_breaks, clause_breaks
 
@@ -257,10 +259,43 @@ def apply_breaks(text: str, candidates: Iterable[BreakCandidate]) -> str:
     return "\n".join(pieces)
 
 
+CLOSING_SENTENCE_MARKUP = "\"')]}*_~"
+MARKDOWN_CLOSING_SENTENCE_MARKUP = "*_~"
+
+
 def _after_closing_punctuation(text: str, offset: int) -> int:
-    while offset < len(text) and text[offset] in "\"')]}":
+    while offset < len(text) and text[offset] in CLOSING_SENTENCE_MARKUP:
         offset += 1
     return offset
+
+
+def _markdown_closing_sentence_candidates(text: str) -> list[BreakCandidate]:
+    candidates: list[BreakCandidate] = []
+
+    for index, char in enumerate(text):
+        if char not in ".!?":
+            continue
+
+        offset = index + 1
+        marker_start = offset
+        while offset < len(text) and text[offset] in MARKDOWN_CLOSING_SENTENCE_MARKUP:
+            offset += 1
+
+        if offset == marker_start:
+            continue
+
+        if offset < len(text) and text[offset].isspace():
+            candidates.append(
+                BreakCandidate(
+                    offset=offset,
+                    kind="sentence",
+                    confidence=0.99,
+                    reason="Markdown closing markup sentence boundary",
+                    mandatory=True,
+                )
+            )
+
+    return _dedupe_candidates(candidates, len(text))
 
 
 def _next_clause_break(

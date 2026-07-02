@@ -10,6 +10,7 @@ from sembrr.breaks import (
     BreakOptions,
     SentenceEngine,
     SentenceEngineError,
+    _markdown_closing_sentence_candidates,
     _spacy_clause_candidates,
     format_prose,
 )
@@ -148,6 +149,28 @@ class SembrrTests(unittest.TestCase):
             "nisi ut aliquip ex ea commodo consequat.\n"
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_breaks_after_emphasized_sentence(self) -> None:
+        source = (
+            "**Lorem ipsum.** Lorem ipsum dolor sit amet, consectetur adipiscing elit, "
+            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+        )
+        expected = (
+            "**Lorem ipsum.**\n"
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
+            "tempor incididunt ut labore et dolore magna aliqua.\n"
+        )
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_breaks_after_strikethrough_sentence(self) -> None:
+        source = "~~Removed sentence.~~ Remaining sentence.\n"
+        expected = "~~Removed sentence.~~\nRemaining sentence.\n"
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_discovers_markdown_closing_markup_boundary(self) -> None:
+        source = "~~Removed sentence.~~ Remaining sentence."
+        candidates = _markdown_closing_sentence_candidates(source)
+        self.assertIn(("sentence", source.index(" Remaining")), _candidate_summary(candidates))
 
     def test_preserves_collapsed_reference_link_source(self) -> None:
         source = "Use [v1.2][]. Then continue.\n"
@@ -369,7 +392,7 @@ def _candidate_summary(candidates):
 
 
 def _after_closing_punctuation(text: str, offset: int) -> int:
-    while offset < len(text) and text[offset] in "\"')]}":
+    while offset < len(text) and text[offset] in "\"')]}*_~":
         offset += 1
     return offset
 

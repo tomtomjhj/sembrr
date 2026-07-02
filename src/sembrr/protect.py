@@ -1,8 +1,8 @@
 """Hide Markdown inline source spans from prose linebreaking.
 
 The prose engine should see sentence text, not Markdown internals.
-This module replaces tree-sitter inline nodes such as emphasis, code spans,
-links, images, autolinks, and HTML tags with placeholders before sentence splitting.
+This module replaces tree-sitter inline nodes such as code spans, links, images,
+autolinks, and HTML tags with placeholders before sentence splitting.
 After line breaks are selected, the original source slices are restored
 byte-for-byte.
 """
@@ -19,14 +19,11 @@ PROTECTED_NODE_TYPES = {
     "code_span",
     "collapsed_reference_link",
     "email_autolink",
-    "emphasis",
     "full_reference_link",
     "html_tag",
     "image",
     "inline_link",
     "shortcut_link",
-    "strikethrough",
-    "strong_emphasis",
     "uri_autolink",
 }
 
