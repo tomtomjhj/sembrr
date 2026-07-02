@@ -170,6 +170,7 @@ OPTIONAL_KIND_PRIORITY = {
     "nominal_coordinate": 0,
     "infinitive_phrase": 0,
     "participial_phrase": 0,
+    "comma_phrase": -1,
 }
 
 
@@ -359,6 +360,17 @@ def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
                     reason=f"spaCy participial phrase marker {lower}",
                 )
             )
+            continue
+
+        if _is_comma_phrase_marker(token, text):
+            candidates.append(
+                BreakCandidate(
+                    offset=_token_end(token),
+                    kind="comma_phrase",
+                    confidence=0.35,
+                    reason="spaCy comma phrase boundary",
+                )
+            )
 
     return _dedupe_candidates(candidates, len(text))
 
@@ -404,6 +416,12 @@ def select_breaks(
         selected_offsets.add(chosen.offset)
 
     if options.mode == "strict":
+        _add_strict_candidate_breaks(
+            text,
+            selected,
+            [candidate for candidate in optional if candidate.kind == "comma_phrase"],
+            options,
+        )
         _add_strict_word_breaks(
             text,
             selected,
@@ -490,6 +508,70 @@ def _valid_fragment(text: str, offset: int, start: int, end: int, options: Break
     left = text[start:offset].strip()
     right = text[offset:end].strip()
     return len(left) >= options.min_clause_chars and len(right) >= options.min_clause_chars
+
+
+def _add_strict_candidate_breaks(
+    text: str,
+    selected: list[BreakCandidate],
+    candidates: list[BreakCandidate],
+    options: BreakOptions,
+) -> None:
+    selected_offsets = {candidate.offset for candidate in selected}
+
+    while True:
+        boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
+        boundaries = sorted(set(boundaries))
+
+        for start, end in zip(boundaries, boundaries[1:], strict=False):
+            if len(text[start:end].strip()) <= options.target_segment_chars:
+                continue
+
+            candidate = _strict_candidate_break(
+                text,
+                start,
+                end,
+                candidates,
+                selected_offsets,
+                options,
+            )
+            if candidate is None:
+                continue
+
+            selected.append(candidate)
+            selected_offsets.add(candidate.offset)
+            break
+        else:
+            return
+
+
+def _strict_candidate_break(
+    text: str,
+    start: int,
+    end: int,
+    candidates: list[BreakCandidate],
+    selected_offsets: set[int],
+    options: BreakOptions,
+) -> BreakCandidate | None:
+    local = [
+        candidate
+        for candidate in candidates
+        if start < candidate.offset < end and candidate.offset not in selected_offsets
+    ]
+    if not local:
+        return None
+
+    before_target = [
+        candidate
+        for candidate in local
+        if len(text[start : candidate.offset].strip()) <= options.target_segment_chars
+    ]
+    if before_target:
+        return max(
+            before_target,
+            key=lambda candidate: len(text[start : candidate.offset].strip()),
+        )
+
+    return min(local, key=lambda candidate: candidate.offset)
 
 
 def _add_strict_word_breaks(
@@ -740,6 +822,11 @@ def _is_infinitive_phrase_marker(tokens: list[Any], index: int) -> bool:
 
 def _is_participial_phrase_marker(token: Any) -> bool:
     return str(token.tag_) in {"VBG", "VBN"} and str(token.dep_) in {"acl", "advcl", "xcomp"}
+
+
+def _is_comma_phrase_marker(token: Any, text: str) -> bool:
+    offset = _token_end(token)
+    return str(token.text) == "," and offset < len(text) and text[offset].isspace()
 
 
 def _next_conjunct_token(tokens: list[Any], index: int) -> Any | None:

@@ -170,6 +170,7 @@ Accepted phrase candidates:
   when the following conjunct has its own subject and finite verb.
 - Before non-comma-led coordinated noun phrase tails.
 - Before infinitive and participial phrase tails.
+- After commas as a last-resort phrase boundary.
 
 Phrase candidates are lower-priority because they are not full clauses.
 They still must satisfy the same fragment-length checks as clause candidates.
@@ -179,7 +180,8 @@ They are not added inside matched parenthetical spans.
 
 Strict mode uses phrase mode candidates first.
 If any segment still exceeds `target_segment_chars`,
-it adds breaks at word boundaries.
+it tries remaining comma phrase candidates,
+then adds breaks at word boundaries.
 Protected Markdown atoms stay indivisible,
 so an atom longer than `target_segment_chars` can still produce a longer line.
 

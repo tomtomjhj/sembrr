@@ -127,6 +127,18 @@ class FixtureEngine:
                 )
             )
 
+        cursor = text.find(",")
+        while cursor >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=cursor + 1,
+                    kind="comma_phrase",
+                    confidence=0.35,
+                    reason="fixture comma phrase boundary",
+                )
+            )
+            cursor = text.find(",", cursor + 1)
+
         return candidates
 
     def clause_candidates(self, text: str) -> list[BreakCandidate]:
@@ -248,10 +260,10 @@ class SembrrTests(unittest.TestCase):
             "nisi ut aliquip ex ea commodo consequat.\n"
         )
         expected = (
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua.\n"
-            "*Ut enim ad minim veniam*, quis nostrud exercitation ullamco laboris "
-            "nisi ut aliquip ex ea commodo consequat.\n"
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+            "*Ut enim ad minim veniam*,\n"
+            "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
@@ -262,8 +274,8 @@ class SembrrTests(unittest.TestCase):
         )
         expected = (
             "**Lorem ipsum.**\n"
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua.\n"
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
@@ -353,14 +365,14 @@ class SembrrTests(unittest.TestCase):
             "sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
         )
         expected = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua.\n"
-            "  Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi "
-            "ut aliquip ex ea commodo consequat.\n"
+            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+            "  Ut enim ad minim veniam,\n"
+            "  quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
             "    * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
             "dolore eu fugiat nulla pariatur.\n"
-            "      Excepteur sint occaecat cupidatat non proident, sunt in culpa qui "
-            "officia deserunt mollit anim id est laborum.\n"
+            "      Excepteur sint occaecat cupidatat non proident,\n"
+            "      sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
@@ -374,13 +386,13 @@ class SembrrTests(unittest.TestCase):
             "mollit anim id est laborum.\n"
         )
         expected = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua.\n"
-            "  Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi "
-            "ut aliquip ex ea commodo consequat.\n"
+            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+            "  Ut enim ad minim veniam,\n"
+            "  quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
             "\n"
-            "Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt "
-            "mollit anim id est laborum.\n"
+            "Excepteur sint occaecat cupidatat non proident,\n"
+            "sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
@@ -519,10 +531,71 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
+    def test_phrase_mode_uses_comma_break_as_last_resort(self) -> None:
+        source = (
+            "The formatter keeps the prose readable, even when stronger phrase candidates "
+            "are absent from the sentence."
+        )
+        expected = (
+            "The formatter keeps the prose readable,\n"
+            "even when stronger phrase candidates are absent from the sentence."
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=70, min_clause_chars=24)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_phrase_mode_rejects_short_comma_breaks(self) -> None:
+        source = (
+            "Short start, then the formatter keeps adding more words until the line is "
+            "too long for the target."
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=30)
+
+        self.assertEqual(format_prose(source, ENGINE, options), source)
+
+    def test_phrase_mode_prefers_nonfinite_phrase_over_comma_break(self) -> None:
+        source = (
+            "The formatter keeps a stable projection, while using parser output to preserve "
+            "source offsets."
+        )
+        comma = BreakCandidate(
+            offset=source.index(",") + 1,
+            kind="comma_phrase",
+            confidence=0.35,
+            reason="test comma phrase boundary",
+        )
+        nonfinite = BreakCandidate(
+            offset=source.index("using"),
+            kind="participial_phrase",
+            confidence=0.45,
+            reason="test participial phrase boundary",
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=70, min_clause_chars=24)
+
+        selected = select_breaks(source, [], [comma, nonfinite], options)
+
+        self.assertEqual(selected, [nonfinite])
+
     def test_strict_mode_enforces_target_at_word_boundaries(self) -> None:
         source = "Alpha beta gamma delta epsilon zeta eta."
         expected = "Alpha beta gamma\ndelta epsilon\nzeta eta."
         options = BreakOptions(mode="strict", target_segment_chars=16)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
+    def test_strict_mode_uses_short_comma_break_before_word_boundary(self) -> None:
+        source = (
+            "Short start, then the formatter keeps adding more words until the line is "
+            "too long for the target."
+        )
+        expected = (
+            "Short start,\n"
+            "then the formatter keeps\n"
+            "adding more words until the\n"
+            "line is too long for the\n"
+            "target."
+        )
+        options = BreakOptions(mode="strict", target_segment_chars=30)
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
@@ -843,7 +916,7 @@ class SembrrTests(unittest.TestCase):
 
     def test_phrase_mode_discovers_spacy_lowest_priority_phrase_boundaries(self) -> None:
         source = (
-            "The formatter projects Markdown source to preserve protected spans using "
+            "The formatter projects Markdown source, to preserve protected spans using "
             "parser output."
         )
         tokens = _fake_doc(
@@ -854,6 +927,7 @@ class SembrrTests(unittest.TestCase):
                 ("projects", "VERB", "ROOT", "VBZ"),
                 ("Markdown", "PROPN", "compound", "NNP"),
                 ("source", "NOUN", "dobj", "NN"),
+                (",", "PUNCT", "punct", ","),
                 ("to", "PART", "aux", "TO"),
                 ("preserve", "VERB", "acl", "VB"),
                 ("protected", "VERB", "amod", "VBN"),
@@ -870,10 +944,11 @@ class SembrrTests(unittest.TestCase):
 
         self.assertIn(("infinitive_phrase", source.index("to")), summary)
         self.assertIn(("participial_phrase", source.index("using")), summary)
+        self.assertIn(("comma_phrase", source.index(",") + 1), summary)
 
     def test_phrase_mode_avoids_parenthetical_phrase_boundaries(self) -> None:
         source = (
-            "Authors keep a guide (including tricky examples or splitting extra cases) "
+            "Authors keep a guide (including tricky examples, or splitting extra cases) "
             "before readers use it."
         )
         tokens = _fake_doc(
@@ -887,6 +962,7 @@ class SembrrTests(unittest.TestCase):
                 ("including", "ADP", "prep", "VBG"),
                 ("tricky", "ADJ", "amod", "JJ"),
                 ("examples", "NOUN", "pobj", "NNS"),
+                (",", "PUNCT", "punct", ","),
                 ("or", "CCONJ", "cc", "CC"),
                 ("splitting", "VERB", "conj", "VBG"),
                 ("extra", "ADJ", "amod", "JJ"),
@@ -905,6 +981,7 @@ class SembrrTests(unittest.TestCase):
 
         self.assertNotIn(("example_phrase", source.index("including")), summary)
         self.assertNotIn(("gerund_coordinate", source.index("or")), summary)
+        self.assertNotIn(("comma_phrase", source.index(",") + 1), summary)
 
     def test_preserves_tree_sitter_inline_spans(self) -> None:
         source = "Use `경로/a.b.py`. Visit <https://x.y/z>. Then see http://x.y/z.\n"
