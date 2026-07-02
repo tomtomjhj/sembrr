@@ -138,12 +138,14 @@ Candidate selection is deterministic and greedy:
 7. Repeat until no over-target segment has an eligible breakpoint.
 
 The current selector is not a linear Oppen pretty printer.
-It repeatedly finds the first over-target segment
-and scans ranked breakpoints for that segment.
-In strict mode, word boundaries can make the breakpoint set proportional to input length,
-so pathological paragraphs can take quadratic time or worse.
+It indexes breakpoints by level and source offset,
+then processes over-target segments from left to right.
+Fallback comma and word breakpoints use offset lookup and binary search.
+Semantic breakpoint ranking still scans semantic breakpoints
+inside the current over-target segment,
+so pathological semantic-candidate distributions can still take quadratic time.
 Interactive use is normally dominated by spaCy startup and parsing,
-but the selector should be improved before treating strict mode as a general wrapper.
+but large-document use should profile the selector separately.
 
 Sembrr is not a width-based wrapper.
 If a sentence is long and has no safe semantic break,

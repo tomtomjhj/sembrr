@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bisect import bisect_left
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +29,14 @@ class RankedBreakpoint:
     candidate: BreakCandidate
     level: int
     require_min_fragment: bool
+
+
+@dataclass(frozen=True)
+class LayoutState:
+    breakpoints_by_level: dict[int, list[RankedBreakpoint]]
+    offsets_by_level: dict[int, list[int]]
+    leading_run: list[int]
+    trailing_run: list[int]
 
 
 @dataclass(frozen=True)
@@ -414,7 +424,7 @@ def select_breaks(
         options,
         protected_spans=tuple(protected_spans),
     )
-    _select_layout_breaks(text, selected, layout, options)
+    _select_layout_breaks(text, selected, _layout_state(text, layout), options)
 
     return sorted(selected, key=lambda candidate: candidate.offset)
 
@@ -505,63 +515,223 @@ def _word_breakpoints(
 def _select_layout_breaks(
     text: str,
     selected: list[BreakCandidate],
-    layout: list[RankedBreakpoint],
+    state: LayoutState,
     options: BreakOptions,
 ) -> None:
     selected_offsets = {candidate.offset for candidate in selected}
+    boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
+    boundaries = sorted(set(boundaries))
+    pending = deque(zip(boundaries, boundaries[1:], strict=False))
 
-    while True:
-        chosen = _next_layout_break(text, selected, layout, selected_offsets, options)
+    while pending:
+        start, end = pending.popleft()
+        if _trimmed_len(state, start, end) <= options.target_segment_chars:
+            continue
+
+        target = start + options.target_segment_chars
+        chosen = _best_breakpoint_in_segment(start, end, state, selected_offsets, target, options)
         if chosen is None:
-            return
+            continue
 
         selected.append(chosen.candidate)
         selected_offsets.add(chosen.candidate.offset)
 
+        offset = chosen.candidate.offset
+        pending.appendleft((offset, end))
+        pending.appendleft((start, offset))
 
-def _next_layout_break(
-    text: str,
-    selected: Iterable[BreakCandidate],
-    layout: list[RankedBreakpoint],
+
+def _layout_state(text: str, breakpoints: list[RankedBreakpoint]) -> LayoutState:
+    breakpoints_by_level: dict[int, list[RankedBreakpoint]] = {}
+    offsets_by_level: dict[int, list[int]] = {}
+
+    for ranked in sorted(breakpoints, key=lambda ranked: ranked.candidate.offset):
+        breakpoints_by_level.setdefault(ranked.level, []).append(ranked)
+        offsets_by_level.setdefault(ranked.level, []).append(ranked.candidate.offset)
+
+    return LayoutState(
+        breakpoints_by_level=breakpoints_by_level,
+        offsets_by_level=offsets_by_level,
+        leading_run=_leading_run(text),
+        trailing_run=_trailing_run(text),
+    )
+
+
+def _leading_run(text: str) -> list[int]:
+    run_lengths: list[int] = []
+    count = 0
+    for char in text:
+        if char.isspace():
+            count += 1
+        else:
+            count = 0
+        run_lengths.append(count)
+    run_lengths.append(0)
+    return run_lengths
+
+
+def _trailing_run(text: str) -> list[int]:
+    run_lengths = [0] * (len(text) + 1)
+    count = 0
+    for offset in range(len(text) - 1, -1, -1):
+        if text[offset].isspace():
+            count += 1
+        else:
+            count = 0
+        run_lengths[offset] = count
+    return run_lengths
+
+
+def _best_breakpoint_in_segment(
+    start: int,
+    end: int,
+    state: LayoutState,
     selected_offsets: set[int],
+    target: int,
     options: BreakOptions,
 ) -> RankedBreakpoint | None:
-    boundaries = [0] + [candidate.offset for candidate in selected] + [len(text)]
-    boundaries = sorted(set(boundaries))
-
-    for start, end in zip(boundaries, boundaries[1:], strict=False):
-        segment = text[start:end].strip()
-        if len(segment) <= options.target_segment_chars:
-            continue
-
-        local = [
-            ranked
-            for ranked in layout
-            if _eligible_breakpoint(text, ranked, start, end, selected_offsets, options)
-        ]
-        if not local:
-            continue
-
-        target = start + options.target_segment_chars
-        return sorted(
-            local,
-            key=lambda ranked: _breakpoint_rank(
-                ranked,
-                text,
-                start,
-                target,
-                options,
-            ),
-        )[0]
+    for level in (
+        LAYOUT_LEVEL_SEMANTIC,
+        LAYOUT_LEVEL_COMMA_FALLBACK,
+        LAYOUT_LEVEL_WORD_FALLBACK,
+    ):
+        best = _best_breakpoint_at_level(
+            level,
+            start,
+            end,
+            state,
+            selected_offsets,
+            target,
+            options,
+        )
+        if best is not None:
+            return best
 
     return None
 
 
+def _best_breakpoint_at_level(
+    level: int,
+    start: int,
+    end: int,
+    state: LayoutState,
+    selected_offsets: set[int],
+    target: int,
+    options: BreakOptions,
+) -> RankedBreakpoint | None:
+    breakpoints = state.breakpoints_by_level.get(level)
+    offsets = state.offsets_by_level.get(level)
+    if not breakpoints or not offsets:
+        return None
+
+    first = bisect_left(offsets, start + 1)
+    last = bisect_left(offsets, end)
+    if first == last:
+        return None
+
+    if level == LAYOUT_LEVEL_SEMANTIC:
+        return _best_semantic_breakpoint(
+            breakpoints,
+            range(first, last),
+            start,
+            end,
+            state,
+            selected_offsets,
+            target,
+            options,
+        )
+
+    return _best_fallback_breakpoint(
+        breakpoints,
+        offsets,
+        first,
+        last,
+        start,
+        end,
+        state,
+        selected_offsets,
+        options,
+    )
+
+
+def _best_semantic_breakpoint(
+    breakpoints: list[RankedBreakpoint],
+    indexes: range,
+    start: int,
+    end: int,
+    state: LayoutState,
+    selected_offsets: set[int],
+    target: int,
+    options: BreakOptions,
+) -> RankedBreakpoint | None:
+    best: RankedBreakpoint | None = None
+    best_rank: tuple[float, float, float, float, float] | None = None
+
+    for index in indexes:
+        ranked = breakpoints[index]
+        if not _eligible_breakpoint(ranked, start, end, state, selected_offsets, options):
+            continue
+
+        rank = _breakpoint_rank(ranked, state, start, target, options)
+        if best_rank is None or rank < best_rank:
+            best = ranked
+            best_rank = rank
+
+    return best
+
+
+def _best_fallback_breakpoint(
+    breakpoints: list[RankedBreakpoint],
+    offsets: list[int],
+    first: int,
+    last: int,
+    start: int,
+    end: int,
+    state: LayoutState,
+    selected_offsets: set[int],
+    options: BreakOptions,
+) -> RankedBreakpoint | None:
+    before_target = _last_fallback_before_target(offsets, first, last, start, state, options)
+    if before_target is not None:
+        for index in range(before_target, first - 1, -1):
+            ranked = breakpoints[index]
+            if _eligible_breakpoint(ranked, start, end, state, selected_offsets, options):
+                return ranked
+
+    for index in range((before_target or first - 1) + 1, last):
+        ranked = breakpoints[index]
+        if _eligible_breakpoint(ranked, start, end, state, selected_offsets, options):
+            return ranked
+
+    return None
+
+
+def _last_fallback_before_target(
+    offsets: list[int],
+    first: int,
+    last: int,
+    start: int,
+    state: LayoutState,
+    options: BreakOptions,
+) -> int | None:
+    left = first
+    right = last
+
+    while left < right:
+        middle = (left + right) // 2
+        if _trimmed_len(state, start, offsets[middle]) <= options.target_segment_chars:
+            left = middle + 1
+        else:
+            right = middle
+
+    return left - 1 if left > first else None
+
+
 def _eligible_breakpoint(
-    text: str,
     ranked: RankedBreakpoint,
     start: int,
     end: int,
+    state: LayoutState,
     selected_offsets: set[int],
     options: BreakOptions,
 ) -> bool:
@@ -569,8 +739,8 @@ def _eligible_breakpoint(
     if offset in selected_offsets or offset <= start or offset >= end:
         return False
 
-    return not ranked.require_min_fragment or _valid_fragment(
-        text,
+    return not ranked.require_min_fragment or _valid_fragment_in_state(
+        state,
         offset,
         start,
         end,
@@ -580,7 +750,7 @@ def _eligible_breakpoint(
 
 def _breakpoint_rank(
     ranked: RankedBreakpoint,
-    text: str,
+    state: LayoutState,
     start: int,
     target: int,
     options: BreakOptions,
@@ -595,10 +765,28 @@ def _breakpoint_rank(
             candidate.offset,
         )
 
-    left_len = len(text[start : candidate.offset].strip())
+    left_len = _trimmed_len(state, start, candidate.offset)
     if left_len <= options.target_segment_chars:
         return (ranked.level, 0, -left_len, candidate.offset, 0)
     return (ranked.level, 1, left_len, candidate.offset, 0)
+
+
+def _valid_fragment_in_state(
+    state: LayoutState,
+    offset: int,
+    start: int,
+    end: int,
+    options: BreakOptions,
+) -> bool:
+    left = _trimmed_len(state, start, offset)
+    right = _trimmed_len(state, offset, end)
+    return left >= options.min_clause_chars and right >= options.min_clause_chars
+
+
+def _trimmed_len(state: LayoutState, start: int, end: int) -> int:
+    leading = min(state.trailing_run[start], end - start)
+    trailing = min(state.leading_run[end - 1], end - start - leading)
+    return end - start - leading - trailing
 
 
 def _valid_fragment(text: str, offset: int, start: int, end: int, options: BreakOptions) -> bool:
