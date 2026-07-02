@@ -22,6 +22,17 @@ class BreakOptions:
     model: str = "en_core_web_sm"
 
 
+@dataclass(frozen=True)
+class ClauseMarkerRule:
+    words: frozenset[str]
+    kind: str
+    confidence: float
+    reason: str
+    dependencies: frozenset[str] = frozenset()
+    comma_before: bool = False
+    finite_clause_after: bool = False
+
+
 class SentenceEngineError(RuntimeError):
     """Raised when the configured spaCy runtime cannot support formatting."""
 
@@ -123,6 +134,26 @@ SUBORDINATORS = {
 }
 RELATIVE_MARKERS = {"that", "which", "who", "whom", "whose"}
 DASHES = {"--", "—", "–"}
+STANDALONE_FINITE_DEPS = {"ROOT", "advcl", "ccomp", "conj", "parataxis"}
+WH_TAGS = {"WDT", "WP", "WP$", "WRB"}
+CLAUSE_MARKER_RULES = (
+    ClauseMarkerRule(
+        words=frozenset(COORDINATORS),
+        kind="coordinate",
+        confidence=0.78,
+        reason="coordinate conjunction",
+        dependencies=frozenset({"cc"}),
+        comma_before=True,
+        finite_clause_after=True,
+    ),
+    ClauseMarkerRule(
+        words=frozenset(SUBORDINATORS),
+        kind="subordinate",
+        confidence=0.76,
+        reason="subordinate marker",
+        dependencies=frozenset({"mark", "advmod"}),
+    ),
+)
 OPTIONAL_KIND_PRIORITY = {
     "finite_coordinate": 6,
     "parenthetical-start": 5,
@@ -130,11 +161,13 @@ OPTIONAL_KIND_PRIORITY = {
     "semicolon": 5,
     "colon": 4,
     "dash": 4,
+    "comma_clause": 3,
     "subordinate": 2,
     "coordinate": 2,
     "relative": 1,
     "example_phrase": 0,
     "gerund_coordinate": 0,
+    "nominal_coordinate": 0,
 }
 
 
@@ -214,24 +247,18 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
             )
             continue
 
-        if _is_coordinate_marker(tokens, index, text):
-            candidates.append(
-                BreakCandidate(
-                    offset=offset,
-                    kind="coordinate",
-                    confidence=0.78,
-                    reason=f"spaCy coordinate conjunction {lower}",
-                )
-            )
+        marker = _clause_marker_candidate(tokens, index, text)
+        if marker is not None:
+            candidates.append(marker)
             continue
 
-        if _is_subordinate_marker(token):
+        if _is_comma_clause_start(tokens, index, text):
             candidates.append(
                 BreakCandidate(
                     offset=offset,
-                    kind="subordinate",
-                    confidence=0.76,
-                    reason=f"spaCy subordinate marker {lower}",
+                    kind="comma_clause",
+                    confidence=0.8,
+                    reason=f"spaCy comma-led finite clause {lower}",
                 )
             )
             continue
@@ -295,6 +322,17 @@ def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
                     kind="finite_coordinate",
                     confidence=0.65,
                     reason=f"spaCy finite coordinate marker {lower}",
+                )
+            )
+            continue
+
+        if _is_nominal_coordinate_marker(tokens, index, text):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="nominal_coordinate",
+                    confidence=0.5,
+                    reason=f"spaCy nominal coordinate marker {lower}",
                 )
             )
 
@@ -473,31 +511,51 @@ def _parenthesis_depths(tokens: list[Any], parenthesis_pairs: dict[int, int]) ->
     return depths
 
 
-def _is_coordinate_marker(tokens: list[Any], index: int, text: str) -> bool:
+def _clause_marker_candidate(
+    tokens: list[Any],
+    index: int,
+    text: str,
+) -> BreakCandidate | None:
     token = tokens[index]
-    if str(token.lower_) not in COORDINATORS or not _has_comma_before(text, int(token.idx)):
-        return False
+    lower = str(token.lower_)
 
-    if str(token.dep_) == "cc":
-        return True
+    for rule in CLAUSE_MARKER_RULES:
+        if _matches_clause_marker_rule(rule, tokens, index, text):
+            return BreakCandidate(
+                offset=int(token.idx),
+                kind=rule.kind,
+                confidence=rule.confidence,
+                reason=f"spaCy {rule.reason} {lower}",
+            )
 
-    return _is_result_so_marker(tokens, index)
+    return None
 
 
-def _is_result_so_marker(tokens: list[Any], index: int) -> bool:
+def _matches_clause_marker_rule(
+    rule: ClauseMarkerRule,
+    tokens: list[Any],
+    index: int,
+    text: str,
+) -> bool:
     token = tokens[index]
-    if str(token.lower_) != "so" or str(token.pos_) not in {"ADV", "SCONJ", "CCONJ"}:
+    if str(token.lower_) not in rule.words:
         return False
 
-    verb_index = _next_finite_verb_index(tokens, index)
-    if verb_index is None:
+    if rule.dependencies and str(token.dep_) not in rule.dependencies:
         return False
 
-    return _has_nominal_subject(tokens, index + 1, verb_index + 1)
+    if rule.comma_before and not _has_comma_before(text, int(token.idx)):
+        return False
+
+    return not rule.finite_clause_after or _has_following_finite_clause(tokens, index)
 
 
-def _is_subordinate_marker(token: Any) -> bool:
-    return str(token.lower_) in SUBORDINATORS and str(token.dep_) in {"mark", "advmod"}
+def _is_comma_clause_start(tokens: list[Any], index: int, text: str) -> bool:
+    token = tokens[index]
+    if str(token.pos_) == "PUNCT" or not _has_comma_before(text, int(token.idx)):
+        return False
+
+    return _has_following_finite_clause(tokens, index, stop_at_comma=True)
 
 
 def _is_relative_marker(token: Any, text: str) -> bool:
@@ -533,21 +591,64 @@ def _is_finite_coordinate_marker(tokens: list[Any], index: int) -> bool:
     if str(token.lower_) not in {"and", "or"} or str(token.dep_) != "cc":
         return False
 
-    verb_index = _next_finite_verb_index(tokens, index)
+    return _has_following_finite_clause(tokens, index)
+
+
+def _is_nominal_coordinate_marker(tokens: list[Any], index: int, text: str) -> bool:
+    token = tokens[index]
+    if str(token.lower_) not in {"and", "or"} or str(token.dep_) != "cc":
+        return False
+
+    if _has_comma_before(text, int(token.idx)) or _has_following_finite_clause(tokens, index):
+        return False
+
+    conjunct = _next_conjunct_token(tokens, index)
+    return conjunct is not None and str(conjunct.pos_) in {"ADJ", "NOUN", "PROPN", "PRON"}
+
+
+def _next_conjunct_token(tokens: list[Any], index: int) -> Any | None:
+    for token in tokens[index + 1 :]:
+        if str(token.text) in {".", "!", "?", ";", ":", ","}:
+            return None
+        if str(token.dep_) == "conj":
+            return token
+    return None
+
+
+def _has_following_finite_clause(
+    tokens: list[Any],
+    index: int,
+    *,
+    stop_at_comma: bool = False,
+) -> bool:
+    verb_index = _next_clause_head_index(tokens, index, stop_at_comma=stop_at_comma)
     if verb_index is None:
         return False
 
-    return _has_nominal_subject(tokens, index + 1, verb_index + 1)
+    return _has_nominal_subject(tokens, index, verb_index + 1)
 
 
-def _next_finite_verb_index(tokens: list[Any], index: int) -> int | None:
+def _next_clause_head_index(
+    tokens: list[Any],
+    index: int,
+    *,
+    stop_at_comma: bool,
+) -> int | None:
     for offset, token in enumerate(tokens[index + 1 :], start=index + 1):
         token_text = str(token.text)
-        if token_text in {".", "!", "?", ";", ":"}:
+        if token_text in {".", "!", "?", ";", ":"} or (stop_at_comma and token_text == ","):
             return None
-        if _is_finite_verb(token):
+        if _is_standalone_clause_head(tokens[index], token):
             return offset
     return None
+
+
+def _is_standalone_clause_head(start_token: Any, token: Any) -> bool:
+    if not _is_finite_verb(token):
+        return False
+
+    dep = str(token.dep_)
+    return dep in STANDALONE_FINITE_DEPS or (dep == "relcl" and str(start_token.tag_) in WH_TAGS)
 
 
 def _has_nominal_subject(tokens: list[Any], start: int, end: int) -> bool:

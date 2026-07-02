@@ -94,6 +94,17 @@ class FixtureEngine:
                 )
             )
 
+        nominal_coordinate = text.find(" and the static-analysis ")
+        if nominal_coordinate >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=nominal_coordinate + 1,
+                    kind="nominal_coordinate",
+                    confidence=0.5,
+                    reason="fixture nominal coordinate boundary",
+                )
+            )
+
         return candidates
 
     def clause_candidates(self, text: str) -> list[BreakCandidate]:
@@ -126,9 +137,9 @@ class FixtureEngine:
             candidates.append(
                 BreakCandidate(
                     offset=comma_so + 2,
-                    kind="coordinate",
+                    kind="comma_clause",
                     confidence=0.78,
-                    reason="fixture result coordinate boundary",
+                    reason="fixture comma-led finite clause boundary",
                 )
             )
 
@@ -460,6 +471,19 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_markdown(source, ENGINE, options), expected)
 
+    def test_phrase_mode_formats_markdown_nominal_coordinate(self) -> None:
+        source = (
+            "It is the design rationale behind [`aaa/bbb/example.py`](../bbb/example.py) "
+            "and the static-analysis surface in [`architecture.md` section](architecture.md).\n"
+        )
+        expected = (
+            "It is the design rationale behind [`aaa/bbb/example.py`](../bbb/example.py)\n"
+            "and the static-analysis surface in [`architecture.md` section](architecture.md).\n"
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=100, min_clause_chars=24)
+
+        self.assertEqual(format_markdown(source, ENGINE, options), expected)
+
     def test_clause_mode_discovers_spacy_subordinate_boundary(self) -> None:
         source = (
             "The writer keeps context visible "
@@ -514,7 +538,7 @@ class SembrrTests(unittest.TestCase):
         candidates = _spacy_clause_candidates(source, tokens)
         self.assertIn(("coordinate", source.index("and")), _candidate_summary(candidates))
 
-    def test_clause_mode_discovers_spacy_result_so_boundary(self) -> None:
+    def test_clause_mode_discovers_spacy_comma_clause_boundary(self) -> None:
         source = "The formatter preserves the cache, so the runner evaluates the result later."
         tokens = _fake_doc(
             source,
@@ -538,7 +562,59 @@ class SembrrTests(unittest.TestCase):
 
         candidates = _spacy_clause_candidates(source, tokens)
 
-        self.assertIn(("coordinate", source.index("so")), _candidate_summary(candidates))
+        self.assertIn(("comma_clause", source.index("so")), _candidate_summary(candidates))
+
+    def test_clause_mode_discovers_nonlexical_comma_clause_boundary(self) -> None:
+        source = "The guide explains the process, how the writer keeps readers oriented."
+        tokens = _fake_doc(
+            source,
+            [
+                ("The", "DET", "det", "DT"),
+                ("guide", "NOUN", "nsubj", "NN"),
+                ("explains", "VERB", "ROOT", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("process", "NOUN", "dobj", "NN"),
+                (",", "PUNCT", "punct", ","),
+                ("how", "SCONJ", "advmod", "WRB"),
+                ("the", "DET", "det", "DT"),
+                ("writer", "NOUN", "nsubj", "NN"),
+                ("keeps", "VERB", "ccomp", "VBZ"),
+                ("readers", "NOUN", "dobj", "NNS"),
+                ("oriented", "ADJ", "acomp", "JJ"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+
+        self.assertIn(("comma_clause", source.index("how")), _candidate_summary(candidates))
+
+    def test_clause_mode_ignores_comma_led_noun_phrase_tail(self) -> None:
+        source = "The guide explains the process, and the concrete check it unlocks."
+        tokens = _fake_doc(
+            source,
+            [
+                ("The", "DET", "det", "DT"),
+                ("guide", "NOUN", "nsubj", "NN"),
+                ("explains", "VERB", "ROOT", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("process", "NOUN", "dobj", "NN"),
+                (",", "PUNCT", "punct", ","),
+                ("and", "CCONJ", "cc", "CC"),
+                ("the", "DET", "det", "DT"),
+                ("concrete", "ADJ", "amod", "JJ"),
+                ("check", "NOUN", "conj", "NN"),
+                ("it", "PRON", "nsubj", "PRP"),
+                ("unlocks", "VERB", "relcl", "VBZ"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertNotIn(("comma_clause", source.index("and")), summary)
+        self.assertNotIn(("coordinate", source.index("and")), summary)
 
     def test_clause_mode_prefers_parenthetical_boundaries(self) -> None:
         source = (
@@ -668,6 +744,44 @@ class SembrrTests(unittest.TestCase):
 
         self.assertIn(
             ("finite_coordinate", source.index("and")),
+            _candidate_summary(candidates),
+        )
+
+    def test_phrase_mode_discovers_spacy_nominal_coordinate_boundary(self) -> None:
+        source = (
+            "It is the design rationale behind a reference link and the static-analysis "
+            "surface in a design note."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("It", "PRON", "nsubj", "PRP"),
+                ("is", "AUX", "ROOT", "VBZ"),
+                ("the", "DET", "det", "DT"),
+                ("design", "NOUN", "compound", "NN"),
+                ("rationale", "NOUN", "attr", "NN"),
+                ("behind", "ADP", "prep", "IN"),
+                ("a", "DET", "det", "DT"),
+                ("reference", "NOUN", "compound", "NN"),
+                ("link", "NOUN", "pobj", "NN"),
+                ("and", "CCONJ", "cc", "CC"),
+                ("the", "DET", "det", "DT"),
+                ("static", "NOUN", "compound", "NN"),
+                ("-", "PUNCT", "punct", "HYPH"),
+                ("analysis", "NOUN", "compound", "NN"),
+                ("surface", "NOUN", "conj", "NN"),
+                ("in", "ADP", "prep", "IN"),
+                ("a", "DET", "det", "DT"),
+                ("design", "NOUN", "compound", "NN"),
+                ("note", "NOUN", "pobj", "NN"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_phrase_candidates(source, tokens)
+
+        self.assertIn(
+            ("nominal_coordinate", source.index("and")),
             _candidate_summary(candidates),
         )
 
