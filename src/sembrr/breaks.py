@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
+
+import spacy
 
 
 @dataclass(frozen=True)
@@ -32,11 +33,6 @@ class SentenceEngine:
 
     def __init__(self, model: str = "en_core_web_sm") -> None:
         self._model = model
-
-        try:
-            spacy: Any = importlib.import_module("spacy")
-        except ModuleNotFoundError as error:
-            raise SentenceEngineError("spaCy is required") from error
 
         try:
             self._nlp: Any = spacy.load(model, disable=["ner"])

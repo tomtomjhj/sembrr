@@ -17,6 +17,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  # spaCy imports click at import time, but the resolved spaCy/Typer stack does not declare it.
+  "click>=8.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "spacy>=3.8.0",
   "tree-sitter>=0.25.2",
@@ -61,3 +63,7 @@ python_version = "3.10"
 packages = ["sembrr"]
 strict = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "spacy"
+follow_imports = "skip"
