@@ -1,10 +1,10 @@
-"""Hide Markdown inline source spans from prose linebreaking.
+"""Project Markdown inline source spans for prose linebreaking.
 
 The prose engine should see sentence text, not Markdown internals.
 This module replaces tree-sitter inline nodes such as code spans, links, images,
 autolinks, and HTML tags with placeholders before sentence splitting.
-After line breaks are selected, the original source slices are restored
-byte-for-byte.
+It also removes emphasis delimiters from the prose view while preserving a source
+offset map for selected line breaks.
 """
 
 from __future__ import annotations
@@ -26,69 +26,48 @@ PROTECTED_NODE_TYPES = {
     "shortcut_link",
     "uri_autolink",
 }
+SKIPPED_NODE_TYPES = {"emphasis_delimiter"}
 
 INLINE_PARSER = Parser()
 INLINE_PARSER.language = Language(tree_sitter_markdown.inline_language())
 
 
 @dataclass(frozen=True)
-class ProtectedText:
+class ProjectedText:
+    source: str
     text: str
-    atoms: dict[str, str]
+    source_offsets: tuple[int, ...]
 
-    def restore(self, value: str) -> str:
-        for placeholder, original in self.atoms.items():
-            value = value.replace(placeholder, original)
-        return value
+    def source_offset(self, offset: int) -> int:
+        return self.source_offsets[offset]
 
 
 @dataclass(frozen=True)
 class InlineInspection:
     has_hard_line_break: bool
     has_multiline_protected_span: bool
-    protected: ProtectedText
+    projected: ProjectedText
 
 
 def inspect_inline(text: str) -> InlineInspection:
     tree = _parse_inline(text)
     has_hard_line_break = _has_node_type(tree.root_node, "hard_line_break")
     has_multiline_protected_span = _has_multiline_protected_node(tree.root_node)
-    protected = (
-        ProtectedText(text=text, atoms={})
+    projected = (
+        ProjectedText(source=text, text=text, source_offsets=tuple(range(len(text) + 1)))
         if has_hard_line_break or has_multiline_protected_span
-        else _protect_spans(text, _collect_spans_from_tree(text, tree))
+        else _project_text_from_tree(text, tree)
     )
     return InlineInspection(
         has_hard_line_break=has_hard_line_break,
         has_multiline_protected_span=has_multiline_protected_span,
-        protected=protected,
+        projected=projected,
     )
 
 
-def protect_inline(text: str) -> ProtectedText:
-    return _protect_spans(text, _collect_spans(text))
-
-
-def _protect_spans(text: str, spans: list[tuple[int, int]]) -> ProtectedText:
-    if not spans:
-        return ProtectedText(text=text, atoms={})
-
-    pieces: list[str] = []
-    atoms: dict[str, str] = {}
-    cursor = 0
-    placeholder_prefix = _placeholder_prefix(text, len(spans))
-
-    for index, (start, end) in enumerate(spans):
-        if start < cursor:
-            continue
-        placeholder = f"{placeholder_prefix}{index}_"
-        pieces.append(text[cursor:start])
-        pieces.append(placeholder)
-        atoms[placeholder] = text[start:end]
-        cursor = end
-
-    pieces.append(text[cursor:])
-    return ProtectedText(text="".join(pieces), atoms=atoms)
+def project_inline(text: str) -> ProjectedText:
+    tree = _parse_inline(text)
+    return _project_text_from_tree(text, tree)
 
 
 def has_hard_line_break(text: str) -> bool:
@@ -99,11 +78,6 @@ def has_hard_line_break(text: str) -> bool:
 def has_multiline_protected_span(text: str) -> bool:
     tree = _parse_inline(text)
     return _has_multiline_protected_node(tree.root_node)
-
-
-def _collect_spans(text: str) -> list[tuple[int, int]]:
-    tree = _parse_inline(text)
-    return _collect_spans_from_tree(text, tree)
 
 
 def _collect_spans_from_tree(text: str, tree: Tree) -> list[tuple[int, int]]:
@@ -117,6 +91,66 @@ def _collect_spans_from_tree(text: str, tree: Tree) -> list[tuple[int, int]]:
 
 def _parse_inline(text: str) -> Tree:
     return INLINE_PARSER.parse(text.encode())
+
+
+def _project_text_from_tree(text: str, tree: Tree) -> ProjectedText:
+    protected_spans = _collect_spans_from_tree(text, tree)
+    skipped_spans = _collect_skipped_spans(text, tree)
+    protected_by_start = _span_by_start(protected_spans)
+    skipped_by_start = _span_by_start(skipped_spans)
+    placeholder_prefix = _placeholder_prefix(text, len(protected_spans))
+    pieces: list[str] = []
+    source_offsets = [0]
+    cursor = 0
+    atom_index = 0
+
+    while cursor < len(text):
+        protected_end = protected_by_start.get(cursor)
+        if protected_end is not None:
+            placeholder = f"{placeholder_prefix}{atom_index}_"
+            atom_index += 1
+            pieces.append(placeholder)
+            source_offsets.extend(protected_end for _ in placeholder)
+            cursor = protected_end
+            continue
+
+        skipped_end = skipped_by_start.get(cursor)
+        if skipped_end is not None:
+            if pieces:
+                source_offsets[-1] = skipped_end
+            cursor = skipped_end
+            continue
+
+        pieces.append(text[cursor])
+        source_offsets.append(cursor + 1)
+        cursor += 1
+
+    return ProjectedText(
+        source=text,
+        text="".join(pieces),
+        source_offsets=tuple(source_offsets),
+    )
+
+
+def _collect_skipped_spans(text: str, tree: Tree) -> list[tuple[int, int]]:
+    byte_to_char = _byte_to_char_offsets(text)
+    return _skipped_node_spans(tree.root_node, byte_to_char)
+
+
+def _skipped_node_spans(node: Node, byte_to_char: dict[int, int]) -> list[tuple[int, int]]:
+    if node.type in SKIPPED_NODE_TYPES:
+        start = byte_to_char[node.start_byte]
+        end = byte_to_char[node.end_byte]
+        return [(start, end)]
+
+    spans: list[tuple[int, int]] = []
+    for child in node.children:
+        spans.extend(_skipped_node_spans(child, byte_to_char))
+    return spans
+
+
+def _span_by_start(spans: list[tuple[int, int]]) -> dict[int, int]:
+    return {start: end for start, end in spans}
 
 
 def _placeholder_prefix(text: str, count: int) -> str:

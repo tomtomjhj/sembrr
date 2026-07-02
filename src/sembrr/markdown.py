@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import tree_sitter_markdown
 from tree_sitter import Language, Node, Parser
 
-from .breaks import BreakOptions, SentenceEngine, format_prose
-from .protect import inspect_inline
+from .breaks import BreakOptions, SentenceEngine, apply_breaks, select_breaks
+from .protect import ProjectedText, inspect_inline
 
 PRESERVED_PREFIX_NODE_TYPES = {"block_quote_marker"}
 
@@ -248,10 +248,9 @@ def format_markdown_block(
     if not text:
         return block
 
-    protected = body_inspection.protected if text == body_source else inspect_inline(text).protected
-    formatted = format_prose(protected.text, engine, options)
-    restored = protected.restore(formatted)
-    formatted_lines = restored.split("\n")
+    projected = body_inspection.projected if text == body_source else inspect_inline(text).projected
+    formatted = _format_projected_prose(projected, engine, options)
+    formatted_lines = formatted.split("\n")
 
     with_prefixes: list[str] = []
     for offset, line in enumerate(formatted_lines):
@@ -269,6 +268,32 @@ class PrefixInfo:
         self.first_prefix = first_prefix
         self.next_prefix = next_prefix
         self.body_lines = body_lines
+
+
+def _format_projected_prose(
+    projected: ProjectedText,
+    engine: SentenceEngine,
+    options: BreakOptions,
+) -> str:
+    sentence_breaks, optional_breaks = engine.break_candidates(
+        projected.text,
+        include_clauses=options.mode == "clause",
+    )
+    source_sentence_breaks = [
+        replace(candidate, offset=projected.source_offset(candidate.offset))
+        for candidate in sentence_breaks
+    ]
+    source_optional_breaks = [
+        replace(candidate, offset=projected.source_offset(candidate.offset))
+        for candidate in optional_breaks
+    ]
+    selected = select_breaks(
+        projected.source,
+        source_sentence_breaks,
+        source_optional_breaks,
+        options,
+    )
+    return apply_breaks(projected.source, selected)
 
 
 def _strip_source_prefixes(lines: list[str], prefixes: list[str]) -> list[str]:

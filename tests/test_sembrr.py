@@ -10,7 +10,6 @@ from sembrr.breaks import (
     BreakOptions,
     SentenceEngine,
     SentenceEngineError,
-    _markdown_closing_sentence_candidates,
     _spacy_clause_candidates,
     format_prose,
 )
@@ -83,6 +82,20 @@ class FixtureEngine:
 
 
 ENGINE = FixtureEngine()
+
+
+class RecordingEngine(FixtureEngine):
+    def __init__(self) -> None:
+        self.seen_text: list[str] = []
+
+    def break_candidates(
+        self,
+        text: str,
+        *,
+        include_clauses: bool,
+    ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
+        self.seen_text.append(text)
+        return super().break_candidates(text, include_clauses=include_clauses)
 
 
 class FakeToken:
@@ -167,10 +180,25 @@ class SembrrTests(unittest.TestCase):
         expected = "~~Removed sentence.~~\nRemaining sentence.\n"
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
-    def test_discovers_markdown_closing_markup_boundary(self) -> None:
-        source = "~~Removed sentence.~~ Remaining sentence."
-        candidates = _markdown_closing_sentence_candidates(source)
-        self.assertIn(("sentence", source.index(" Remaining")), _candidate_summary(candidates))
+    def test_breaks_inside_emphasis(self) -> None:
+        source = "*One sentence. Two sentence.* Outside sentence.\n"
+        expected = "*One sentence.\nTwo sentence.*\nOutside sentence.\n"
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_passes_projected_text_to_sentence_engine(self) -> None:
+        engine = RecordingEngine()
+        source = "~~Removed sentence.~~ Remaining sentence.\n"
+
+        format_markdown(source, engine, BreakOptions())
+
+        self.assertEqual(engine.seen_text, ["Removed sentence. Remaining sentence."])
+
+    def test_clause_selection_counts_source_markup(self) -> None:
+        source = "**Writers keep context visible; readers understand the result**\n"
+        expected = "**Writers keep context visible;\nreaders understand the result**\n"
+        options = BreakOptions(mode="clause", target_segment_chars=59, min_clause_chars=10)
+
+        self.assertEqual(format_markdown(source, ENGINE, options), expected)
 
     def test_preserves_collapsed_reference_link_source(self) -> None:
         source = "Use [v1.2][]. Then continue.\n"
@@ -392,7 +420,7 @@ def _candidate_summary(candidates):
 
 
 def _after_closing_punctuation(text: str, offset: int) -> int:
-    while offset < len(text) and text[offset] in "\"')]}*_~":
+    while offset < len(text) and text[offset] in "\"')]}":
         offset += 1
     return offset
 

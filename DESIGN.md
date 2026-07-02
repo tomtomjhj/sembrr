@@ -10,10 +10,17 @@ Sembrr should change only whitespace needed for accepted line breaks.
 
 The formatter must not round-trip Markdown through a renderer or serializer.
 It rewrites the original source text directly,
-using parser output only to find safe regions.
+using parser output to find safe ranges and source offsets.
 
-Protected source slices are restored byte-for-byte.
-Protected slices include:
+Inline formatting uses a projected prose view.
+The projected text is the string passed to spaCy.
+It omits Markdown emphasis delimiters,
+and it replaces atomic source spans with placeholders.
+Each projected offset maps back to an offset in the source text,
+so selected line breaks are applied to the original source.
+
+Atomic source spans are preserved byte-for-byte.
+Atomic spans include:
 
 - Fenced and indented code blocks.
 - Inline code spans.
@@ -28,8 +35,26 @@ Protected slices include:
 
 Sembrr uses tree-sitter for Markdown structure.
 The block parser selects safe paragraph ranges.
-The inline parser protects source spans such as code, links, autolinks,
-images, and HTML tags.
+The inline parser builds the projected prose view for each paragraph.
+
+The inline projection handles three kinds of source:
+
+- Normal prose is copied into the projected text.
+- Emphasis, strong emphasis, and strikethrough delimiters are skipped.
+- Code, links, images, autolinks, raw URLs, and inline HTML become atomic placeholders.
+
+The projection keeps a source offset map.
+When spaCy reports a break after projected text such as `Removed sentence.`,
+the mapped source offset can land after Markdown closing delimiters,
+such as the closing `~~` in `~~Removed sentence.~~`.
+
+Link text remains atomic.
+This keeps link syntax byte-for-byte stable,
+and it avoids line breaks inside link labels or destinations.
+
+Bare URLs still need a small text matcher.
+Tree-sitter recognizes autolinks such as `<https://example.com>`,
+but it does not expose bare `https://example.com` text as an inline node.
 
 GFM support is compatibility,
 not permission to rewrite every GFM construct.
@@ -47,7 +72,7 @@ Headings are often intentionally one source line.
 Sembrr also skips any block whose source mapping is uncertain.
 A missed formatting opportunity is better than a bad rewrite.
 This includes paragraphs with Markdown hard breaks
-or multi-line protected inline spans.
+or multi-line atomic inline spans.
 
 ## NLP Engine
 
@@ -72,13 +97,20 @@ but a fresh CLI process should still expect noticeable startup latency.
 
 Linebreaking has two phases:
 
-1. Discover candidate breaks.
-2. Choose which candidates to print.
+1. Project source to prose text.
+2. Discover candidate breaks in the projected text.
+3. Choose which candidates to print.
+4. Map selected break offsets back to source offsets.
 
-Candidate discovery uses Markdown-safe spans and spaCy tokens.
+Candidate discovery uses projected prose and spaCy tokens.
 It marks sentence boundaries as mandatory,
 and it marks semicolon, colon, dash,
 and dependency-based clause boundaries as optional.
+
+Candidate selection uses source offsets.
+Segment length checks include Markdown marker characters,
+so `target_segment_chars` describes the source line that will be printed,
+not only the prose seen by spaCy.
 
 Candidate selection is deterministic and greedy:
 
@@ -110,7 +142,7 @@ Accepted candidates:
 
 Rejected candidates:
 
-- Inside protected source.
+- Inside atomic source spans.
 - Inside URLs or paths.
 - Inside numbers or versions.
 - Near very short fragments.
@@ -134,6 +166,7 @@ Tests cover these guarantees:
 - Code blocks are preserved byte-for-byte.
 - Inline code is preserved byte-for-byte.
 - Links and URLs are preserved byte-for-byte.
+- Emphasis and strikethrough markers are preserved.
 - Hard breaks are preserved.
 - Tables are preserved byte-for-byte.
 - Front matter is preserved byte-for-byte.
