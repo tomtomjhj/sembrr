@@ -165,14 +165,14 @@ Accepted phrase candidates:
   when the following conjunct has its own subject and finite verb.
 - Before non-comma-led coordinated noun phrase tails.
 
-Phrase candidates are opt-in because they are not full clauses.
+Phrase candidates are lower-priority because they are not full clauses.
 They still must satisfy the same fragment-length checks as clause candidates.
 They are not added inside matched parenthetical spans.
 
 ## Defaults
 
 ```text
-mode = clause
+mode = phrase
 parser = markdown
 model = en_core_web_sm
 target_segment_chars = 100

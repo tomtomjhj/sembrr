@@ -16,7 +16,7 @@ class BreakCandidate:
 
 @dataclass(frozen=True)
 class BreakOptions:
-    mode: str = "clause"
+    mode: str = "phrase"
     target_segment_chars: int = 100
     min_clause_chars: int = 24
     model: str = "en_core_web_sm"

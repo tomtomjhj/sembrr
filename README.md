@@ -7,9 +7,8 @@ write stdout,
 and never edit files in place.
 
 The default mode keeps sentence boundaries
-and adds conservative clause breaks inside long sentences.
+and adds conservative clause and phrase breaks inside long sentences.
 It is not a width-based wrapper.
-Use phrase mode when you want more breaks inside long sentences.
 
 ## Installation
 
@@ -43,10 +42,10 @@ Use sentence-only mode:
 sembrr --mode sentence < notes.md
 ```
 
-Use phrase mode for more aggressive breaks:
+Use clause mode for fewer breaks:
 
 ```sh
-sembrr --mode phrase < notes.md
+sembrr --mode clause < notes.md
 ```
 
 ## Development
