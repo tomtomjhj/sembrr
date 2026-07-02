@@ -164,6 +164,7 @@ Accepted phrase candidates:
 - Before bare coordinating conjunctions
   when the following conjunct has its own subject and finite verb.
 - Before non-comma-led coordinated noun phrase tails.
+- Before infinitive and participial phrase tails.
 
 Phrase candidates are lower-priority because they are not full clauses.
 They still must satisfy the same fragment-length checks as clause candidates.

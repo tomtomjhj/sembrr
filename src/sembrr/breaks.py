@@ -168,6 +168,8 @@ OPTIONAL_KIND_PRIORITY = {
     "example_phrase": 0,
     "gerund_coordinate": 0,
     "nominal_coordinate": 0,
+    "infinitive_phrase": 0,
+    "participial_phrase": 0,
 }
 
 
@@ -333,6 +335,28 @@ def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
                     kind="nominal_coordinate",
                     confidence=0.5,
                     reason=f"spaCy nominal coordinate marker {lower}",
+                )
+            )
+            continue
+
+        if _is_infinitive_phrase_marker(tokens, index):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="infinitive_phrase",
+                    confidence=0.45,
+                    reason=f"spaCy infinitive phrase marker {lower}",
+                )
+            )
+            continue
+
+        if _is_participial_phrase_marker(token):
+            candidates.append(
+                BreakCandidate(
+                    offset=int(token.idx),
+                    kind="participial_phrase",
+                    confidence=0.45,
+                    reason=f"spaCy participial phrase marker {lower}",
                 )
             )
 
@@ -604,6 +628,19 @@ def _is_nominal_coordinate_marker(tokens: list[Any], index: int, text: str) -> b
 
     conjunct = _next_conjunct_token(tokens, index)
     return conjunct is not None and str(conjunct.pos_) in {"ADJ", "NOUN", "PROPN", "PRON"}
+
+
+def _is_infinitive_phrase_marker(tokens: list[Any], index: int) -> bool:
+    token = tokens[index]
+    if str(token.tag_) != "TO" or str(token.dep_) != "aux":
+        return False
+
+    next_token = _next_non_punctuation_token(tokens, index)
+    return next_token is not None and str(next_token.tag_) == "VB"
+
+
+def _is_participial_phrase_marker(token: Any) -> bool:
+    return str(token.tag_) in {"VBG", "VBN"} and str(token.dep_) in {"acl", "advcl", "xcomp"}
 
 
 def _next_conjunct_token(tokens: list[Any], index: int) -> Any | None:

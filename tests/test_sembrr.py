@@ -105,6 +105,28 @@ class FixtureEngine:
                 )
             )
 
+        to_preserve = text.find(" to preserve ")
+        if to_preserve >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=to_preserve + 1,
+                    kind="infinitive_phrase",
+                    confidence=0.45,
+                    reason="fixture infinitive phrase boundary",
+                )
+            )
+
+        using_parser = text.find(" using parser ")
+        if using_parser >= 0:
+            candidates.append(
+                BreakCandidate(
+                    offset=using_parser + 1,
+                    kind="participial_phrase",
+                    confidence=0.45,
+                    reason="fixture participial phrase boundary",
+                )
+            )
+
         return candidates
 
     def clause_candidates(self, text: str) -> list[BreakCandidate]:
@@ -484,6 +506,19 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_markdown(source, ENGINE, options), expected)
 
+    def test_phrase_mode_uses_weak_nonfinite_phrase_breaks_last(self) -> None:
+        source = (
+            "The formatter projects Markdown source to preserve protected spans and map "
+            "offsets back."
+        )
+        expected = (
+            "The formatter projects Markdown source\n"
+            "to preserve protected spans and map offsets back."
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
+
+        self.assertEqual(format_prose(source, ENGINE, options), expected)
+
     def test_clause_mode_discovers_spacy_subordinate_boundary(self) -> None:
         source = (
             "The writer keeps context visible "
@@ -784,6 +819,36 @@ class SembrrTests(unittest.TestCase):
             ("nominal_coordinate", source.index("and")),
             _candidate_summary(candidates),
         )
+
+    def test_phrase_mode_discovers_spacy_lowest_priority_phrase_boundaries(self) -> None:
+        source = (
+            "The formatter projects Markdown source to preserve protected spans using "
+            "parser output."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("The", "DET", "det", "DT"),
+                ("formatter", "NOUN", "nsubj", "NN"),
+                ("projects", "VERB", "ROOT", "VBZ"),
+                ("Markdown", "PROPN", "compound", "NNP"),
+                ("source", "NOUN", "dobj", "NN"),
+                ("to", "PART", "aux", "TO"),
+                ("preserve", "VERB", "acl", "VB"),
+                ("protected", "VERB", "amod", "VBN"),
+                ("spans", "NOUN", "dobj", "NNS"),
+                ("using", "VERB", "xcomp", "VBG"),
+                ("parser", "NOUN", "compound", "NN"),
+                ("output", "NOUN", "dobj", "NN"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_phrase_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertIn(("infinitive_phrase", source.index("to")), summary)
+        self.assertIn(("participial_phrase", source.index("using")), summary)
 
     def test_phrase_mode_avoids_parenthetical_phrase_boundaries(self) -> None:
         source = (
