@@ -32,14 +32,15 @@ def main(argv: list[str] | None = None) -> int:
         model=args.model,
     )
 
-    source = sys.stdin.read()
-
     try:
+        source = sys.stdin.read()
         engine = SentenceEngine(model=args.model)
         if parser_name == "text":
             result = format_text(source, engine, options)
         else:
             result = format_markdown(source, engine, options)
+    except KeyboardInterrupt:
+        return 130
     except SentenceEngineError as error:
         print(f"sembrr: {error}", file=sys.stderr)
         return 2

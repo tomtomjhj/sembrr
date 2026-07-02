@@ -4,8 +4,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-import spacy
-
 
 @dataclass(frozen=True)
 class BreakCandidate:
@@ -35,6 +33,8 @@ class SentenceEngine:
         self._model = model
 
         try:
+            import spacy
+
             self._nlp: Any = spacy.load(model, exclude=["ner", "lemmatizer"])
         except OSError as error:
             raise SentenceEngineError(f"spaCy model not found: {model}") from error
