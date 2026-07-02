@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sembrr"
+version = "0.1.0"
+description = "Unix-filter formatter for semantic line breaks in Markdown and plain text."
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["formatter", "markdown", "semantic-line-breaks"]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Text Processing :: Markup :: Markdown",
+  "Typing :: Typed",
+]
+dependencies = [
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "spacy>=3.8.0",
+  "tree-sitter>=0.25.2",
+  "tree-sitter-markdown>=0.5.1",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.13.0",
+  "pre-commit>=4.0.0",
+  "ruff>=0.8.0",
+]
+
+[project.scripts]
+sembrr = "sembrr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sembrr = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "UP",
+  "B",
+  "SIM",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sembrr"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["sembrr"]
+strict = true
+warn_unused_configs = true
