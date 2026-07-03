@@ -8,7 +8,7 @@ from tree_sitter import Language, Node, Parser
 from .breaks import BreakOptions, SentenceEngine, apply_breaks, select_breaks
 from .protect import ProjectedText, inspect_inline
 
-PRESERVED_PREFIX_NODE_TYPES = {"block_quote_marker"}
+PRESERVED_PREFIX_NODE_TYPES = {"block_continuation", "block_quote_marker"}
 
 BLOCK_PARSER = Parser()
 BLOCK_PARSER.language = Language(tree_sitter_markdown.language())
@@ -94,7 +94,7 @@ def _paragraph_plan(
     existing_continuations = [
         prefix
         for row, prefix in sorted(continuation_prefixes.items())
-        if row > start_row and prefix
+        if start_row < row < end_row and prefix
     ]
     next_prefix = (
         existing_continuations[0]
@@ -186,16 +186,35 @@ def _preserved_prefix_ranges(paragraph: Node, line_start_byte: int) -> list[rang
 
         sibling = current.prev_sibling
         while sibling is not None and sibling.end_byte > line_start_byte:
-            if (
-                sibling.type in PRESERVED_PREFIX_NODE_TYPES
-                and sibling.start_point.row == paragraph.start_point.row
-                and sibling.end_byte <= paragraph.start_byte
-            ):
-                ranges.append(range(sibling.start_byte, sibling.end_byte))
+            _collect_preserved_prefix_ranges(
+                sibling,
+                paragraph.start_point.row,
+                line_start_byte,
+                paragraph.start_byte,
+                ranges,
+            )
             sibling = sibling.prev_sibling
         current = parent
 
     return ranges
+
+
+def _collect_preserved_prefix_ranges(
+    node: Node,
+    row: int,
+    start_byte: int,
+    end_byte: int,
+    ranges: list[range],
+) -> None:
+    if node.end_byte <= start_byte or node.start_byte >= end_byte:
+        return
+
+    if node.type in PRESERVED_PREFIX_NODE_TYPES and node.start_point.row == row:
+        ranges.append(range(max(node.start_byte, start_byte), min(node.end_byte, end_byte)))
+        return
+
+    for child in node.children:
+        _collect_preserved_prefix_ranges(child, row, start_byte, end_byte, ranges)
 
 
 def _range_overlaps_preserved(start: int, end: int, preserved: list[range]) -> bool:

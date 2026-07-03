@@ -376,6 +376,44 @@ class SembrrTests(unittest.TestCase):
         )
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
+    def test_formats_tight_nested_list_item_continuation_indent(self) -> None:
+        source = (
+            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
+            "incididunt ut labore et dolore magna aliqua.\n"
+            "  * Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut "
+            "aliquip ex ea commodo consequat.\n"
+            "  * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore "
+            "eu fugiat nulla pariatur.\n"
+        )
+        expected = (
+            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+            "  * Ut enim ad minim veniam,\n"
+            "    quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo "
+            "consequat.\n"
+            "  * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
+            "dolore eu fugiat nulla pariatur.\n"
+        )
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_formats_blockquoted_nested_list_item_continuation_marker(self) -> None:
+        source = (
+            "> * Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
+            "incididunt ut labore et dolore magna aliqua.\n"
+            ">   * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore "
+            "eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt "
+            "in culpa qui officia deserunt mollit anim id est laborum.\n"
+        )
+        expected = (
+            "> * Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
+            ">   sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
+            ">   * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
+            "dolore eu fugiat nulla pariatur.\n"
+            ">     Excepteur sint occaecat cupidatat non proident,\n"
+            ">     sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
+        )
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
     def test_formats_list_item_before_following_paragraph(self) -> None:
         source = (
             "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
