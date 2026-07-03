@@ -172,12 +172,12 @@ CLAUSE_MARKER_RULES = (
     ),
 )
 OPTIONAL_KIND_PRIORITY = {
-    "finite_coordinate": 6,
-    "parenthetical-start": 5,
-    "parenthetical-end": 5,
-    "semicolon": 5,
+    "semicolon": 6,
+    "finite_coordinate": 5,
     "colon": 4,
     "dash": 4,
+    "parenthetical-start": 4,
+    "parenthetical-end": 4,
     "comma_clause": 3,
     "subordinate": 2,
     "coordinate": 2,
