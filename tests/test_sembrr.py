@@ -468,6 +468,29 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_prose(source, ENGINE, options), expected)
 
+    def test_phrase_mode_prefers_semicolon_over_later_finite_coordinate(self) -> None:
+        source = (
+            "The runner keeps the intermediate output stable; the scheduler stores "
+            "the result and every downstream check remains green."
+        )
+        semicolon = BreakCandidate(
+            offset=source.index(";") + 1,
+            kind="semicolon",
+            confidence=0.95,
+            reason="test semicolon boundary",
+        )
+        finite_coordinate = BreakCandidate(
+            offset=source.index("and"),
+            kind="finite_coordinate",
+            confidence=0.65,
+            reason="test finite coordinate boundary",
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=100, min_clause_chars=24)
+
+        selected = select_breaks(source, [], [semicolon, finite_coordinate], options)
+
+        self.assertEqual(selected, [semicolon])
+
     def test_phrase_mode_prefers_finite_coordinate_over_short_parenthetical(self) -> None:
         source = (
             "The runner applies the output unchanged and every downstream gate "
@@ -490,6 +513,34 @@ class SembrrTests(unittest.TestCase):
         selected = select_breaks(source, [], [finite_coordinate, parenthetical], options)
 
         self.assertEqual(selected, [finite_coordinate])
+
+    def test_phrase_mode_keeps_fitting_parenthetical_before_breaking_after_it(self) -> None:
+        source = (
+            "Run the check on sample values whose methods (`alpha`, `beta`, `.get`, `size`) "
+            "record a path condition, then solve the collected condition."
+        )
+        parenthetical_start = BreakCandidate(
+            offset=source.index("("),
+            kind="parenthetical-start",
+            confidence=0.94,
+            reason="test parenthetical start",
+        )
+        parenthetical_end = BreakCandidate(
+            offset=source.index(")") + 1,
+            kind="parenthetical-end",
+            confidence=0.94,
+            reason="test parenthetical end",
+        )
+        options = BreakOptions(mode="phrase", target_segment_chars=90, min_clause_chars=24)
+
+        selected = select_breaks(
+            source,
+            [],
+            [parenthetical_start, parenthetical_end],
+            options,
+        )
+
+        self.assertEqual(selected, [parenthetical_end])
 
     def test_phrase_mode_nests_weaker_breaks_inside_stronger_breaks(self) -> None:
         source = (

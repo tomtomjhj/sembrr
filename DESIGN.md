@@ -115,7 +115,7 @@ Segment length checks include Markdown marker characters,
 so `target_segment_chars` describes the source line that will be printed,
 not only the prose seen by spaCy.
 
-The selector is a hierarchical ranked breakpoint pass.
+The selector is a fit-based breakpoint pass.
 Its model is the traditional pretty-printing `group`:
 a group stays flat when it fits,
 and otherwise its breakpoints become available while nested groups decide inside it.
@@ -128,6 +128,7 @@ and the active mode controls which levels are available:
 
 - Semantic breakpoints use clause and phrase priorities as nesting levels.
   A stronger level splits a long segment before weaker levels run inside the pieces.
+  Authored separators such as semicolons are stronger than inferred coordination.
 - Comma fallback breakpoints reuse comma phrase candidates
   after semantic breakpoints fail.
   Phrase mode keeps the normal `min_clause_chars` check.
@@ -140,16 +141,14 @@ Candidate selection is deterministic and greedy:
 1. Always emit mandatory sentence breaks.
 2. Start each mandatory segment at the strongest semantic level.
 3. Keep a segment flat when its printed source length fits `target_segment_chars`.
-4. At a semantic level,
-   choose safe breakpoints from that level in source order.
-5. Split the segment at those breakpoints,
-   then run the next weaker level inside each resulting chunk.
-6. If a semantic level has no eligible breakpoints,
+4. At the current level,
+   choose the last eligible breakpoint whose left side still fits.
+5. If no breakpoint fits before the target,
+   choose the first eligible breakpoint after the target.
+6. Split the segment at that breakpoint,
+   then retry the same level inside both resulting chunks.
+7. If the current level has no eligible breakpoints,
    try the next weaker level on the same segment.
-7. At comma and word fallback levels,
-   choose one breakpoint near the target,
-   split the segment,
-   and retry the same fallback level inside the resulting chunks.
 8. Stop when a segment fits,
    or when no lower level exists.
 
@@ -162,13 +161,17 @@ and a flat set of ranked source offsets.
 Its hierarchy comes from priority levels:
 stronger breaks partition the segment,
 and weaker breaks are considered only inside those partitions.
-Comma and word fallback levels are closer to Wadler's `fillwords` behavior:
-they fill each line near the target rather than opening every possible break.
+Same-level breakpoints use a fill-style decision:
+the selector keeps earlier breakpoints flat while the line still fits,
+so a later breakpoint wins when it gives a better filled line.
+This matters for paired boundaries such as parentheticals,
+where `prefix (details)` should stay flat when it fits
+and the newline should fall after the closing parenthesis.
 
 The selector indexes breakpoints by level and source offset.
-Fallback comma and word levels use offset lookup and binary search.
-Semantic levels scan the candidates inside the current over-target segment,
-then greedily keep a source-ordered safe subset.
+Each level uses offset lookup and binary search
+to find the breakpoints that satisfy fragment-length constraints
+and the target line length.
 After candidate discovery,
 the selector is `O(n + P log P + S log S + B log B)`,
 where `n` is the source length,
