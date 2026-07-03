@@ -251,14 +251,25 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
                 )
             continue
 
-        if parenthesis_depth > 0:
-            continue
-
-        if token_text in {";", ":"}:
+        if token_text == ";":
             candidates.append(
                 BreakCandidate(
                     offset=_token_end(token),
-                    kind="semicolon" if token_text == ";" else "colon",
+                    kind="semicolon",
+                    confidence=0.95,
+                    reason=f"spaCy punctuation {token_text}",
+                )
+            )
+            continue
+
+        if parenthesis_depth > 0:
+            continue
+
+        if token_text == ":":
+            candidates.append(
+                BreakCandidate(
+                    offset=_token_end(token),
+                    kind="colon",
                     confidence=0.95,
                     reason=f"spaCy punctuation {token_text}",
                 )
@@ -305,8 +316,7 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
     return [
         candidate
         for candidate in _dedupe_candidates(candidates, len(text))
-        if _has_finite_verb(tokens, 0, _token_index_at(tokens, candidate.offset))
-        and _has_finite_verb(tokens, _token_index_at(tokens, candidate.offset), len(tokens))
+        if _valid_clause_candidate(tokens, candidate)
     ]
 
 
@@ -1007,6 +1017,14 @@ def _next_non_punctuation_token(tokens: list[Any], index: int) -> Any | None:
 
 def _has_comma_before(text: str, offset: int) -> bool:
     return text[:offset].rstrip().endswith(",")
+
+
+def _valid_clause_candidate(tokens: list[Any], candidate: BreakCandidate) -> bool:
+    if candidate.kind == "semicolon":
+        return True
+
+    offset = _token_index_at(tokens, candidate.offset)
+    return _has_finite_verb(tokens, 0, offset) and _has_finite_verb(tokens, offset, len(tokens))
 
 
 def _has_finite_verb(tokens: list[Any], start: int, end: int) -> bool:

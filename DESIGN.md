@@ -204,7 +204,8 @@ A bad break hurts trust.
 
 Accepted candidates:
 
-- After semicolons.
+- After semicolons,
+  including inside matched parenthetical spans.
 - Around dash interruptions.
 - After colons that introduce an explanation.
 - Before or after matched parenthetical spans.
@@ -215,7 +216,7 @@ Accepted candidates:
 Rejected candidates:
 
 - Inside atomic source spans.
-- Inside matched parenthetical spans.
+- Weaker candidates inside matched parenthetical spans.
 - Inside URLs or paths.
 - Inside numbers or versions.
 - Near very short fragments.

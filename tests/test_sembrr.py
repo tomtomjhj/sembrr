@@ -863,6 +863,43 @@ class SembrrTests(unittest.TestCase):
         self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
         self.assertNotIn(("colon", source.index(":") + 1), summary)
 
+    def test_clause_mode_discovers_semicolon_inside_parenthetical(self) -> None:
+        source = (
+            "Authors ship a summary (builders create a plan; runners check it) "
+            "before readers use it."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("Authors", "NOUN", "nsubj", "NNS"),
+                ("ship", "VERB", "ROOT", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("summary", "NOUN", "dobj", "NN"),
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("builders", "NOUN", "nsubj", "NNS"),
+                ("create", "VERB", "relcl", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("plan", "NOUN", "dobj", "NN"),
+                (";", "PUNCT", "punct", ":"),
+                ("runners", "NOUN", "nsubj", "NNS"),
+                ("check", "VERB", "conj", "VBP"),
+                ("it", "PRON", "dobj", "PRP"),
+                (")", "PUNCT", "punct", "-RRB-"),
+                ("before", "SCONJ", "mark", "IN"),
+                ("readers", "NOUN", "nsubj", "NNS"),
+                ("use", "VERB", "advcl", "VBP"),
+                ("it", "PRON", "dobj", "PRP"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertIn(("parenthetical-start", source.index("(")), summary)
+        self.assertIn(("semicolon", source.index(";") + 1), summary)
+        self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
+
     def test_clause_mode_ignores_unmatched_parenthesis_for_depth(self) -> None:
         source = "Authors ship a draft (temporary note; readers review the result."
         tokens = _fake_doc(
