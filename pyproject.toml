@@ -21,7 +21,9 @@ dependencies = [
   "click>=8.0.0",
   "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "spacy>=3.8.0",
-  "tree-sitter>=0.25.2",
+  # py-tree-sitter 0.26.0 can segfault when tree-sitter-markdown 0.5.1 exposes
+  # Markdown nodes; keep the known-safe parser ABI until the Python bindings agree.
+  "tree-sitter>=0.25.2,<0.26.0",
   "tree-sitter-markdown>=0.5.1",
 ]
 

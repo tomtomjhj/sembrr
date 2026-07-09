@@ -1405,7 +1405,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "spacy", specifier = ">=3.8.0" },
-    { name = "tree-sitter", specifier = ">=0.25.2" },
+    { name = "tree-sitter", specifier = ">=0.25.2,<0.26.0" },
     { name = "tree-sitter-markdown", specifier = ">=0.5.1" },
 ]
 

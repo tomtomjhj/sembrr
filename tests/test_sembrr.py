@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from sembrr.breaks import (
@@ -244,6 +247,43 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "One sentence.\nAnother sentence.\n")
+
+    def test_markdown_parser_survives_large_shallow_document(self) -> None:
+        code = (
+            "import sys\n"
+            "sys.path.insert(0, 'src')\n"
+            "from sembrr.breaks import BreakOptions\n"
+            "from sembrr.markdown import format_markdown\n"
+            "class Engine:\n"
+            "    def break_candidates(self, text, *, include_clauses, include_phrases=False):\n"
+            "        return [], []\n"
+            "def section(index):\n"
+            "    return (\n"
+            "        f'### x.{index} heading (`code`)\\n\\n'\n"
+            "        'word word word word word word word word word word word word word.\\n'\n"
+            "        'word `code` word **word** word [link](target.md) word word.\\n\\n'\n"
+            "        '| a | b | c |\\n|---|---|---|\\n'\n"
+            "        '| word | `code` | word word word word word word word |\\n'\n"
+            "        '| word | `code` | word word word word word word word |\\n\\n'\n"
+            "        '- `code[x]` -- word word word word word word word word word.\\n'\n"
+            "        '  word word word word word word word word word word word word.\\n'\n"
+            "        '- **word** (`code`) -- word word word word word word word word.\\n'\n"
+            "        '  word word word word word word word word word word word word.\\n\\n'\n"
+            "    )\n"
+            "source = 'x `code` word word word word word word.\\n\\n'\n"
+            "source += ''.join(section(index) for index in range(21))\n"
+            "format_markdown(source, Engine(), BreakOptions())\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-X", "faulthandler", "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_preserves_inline_code_and_link_source(self) -> None:
         source = "Use [`foo.bar()`](./api.md#foo.bar). Then use `src/a.b.py`.\n"
