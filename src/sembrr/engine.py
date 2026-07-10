@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol
 
 from .candidates import _dedupe_candidates, _spacy_optional_candidates
 from .models import BreakCandidate
+
+BreakAnalysis = tuple[list[BreakCandidate], list[BreakCandidate]]
 
 
 class BreakEngine(Protocol):
@@ -15,7 +18,15 @@ class BreakEngine(Protocol):
         *,
         include_clauses: bool,
         include_phrases: bool = False,
-    ) -> tuple[list[BreakCandidate], list[BreakCandidate]]: ...
+    ) -> BreakAnalysis: ...
+
+    def break_candidates_batch(
+        self,
+        texts: Iterable[str],
+        *,
+        include_clauses: bool,
+        include_phrases: bool = False,
+    ) -> list[BreakAnalysis]: ...
 
 
 class SentenceEngineError(RuntimeError):
@@ -59,16 +70,49 @@ class SentenceEngine:
         *,
         include_clauses: bool,
         include_phrases: bool = False,
-    ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
+    ) -> BreakAnalysis:
         if not text:
             return [], []
 
-        if (include_clauses or include_phrases) and not self._has_parser:
-            raise SentenceEngineError(
-                f"optional breaks require a spaCy parser model: {self._model}"
-            )
+        self._require_optional_parser(include_clauses, include_phrases)
+        return self._break_candidates_from_doc(
+            text,
+            self._nlp(text),
+            include_clauses=include_clauses,
+            include_phrases=include_phrases,
+        )
 
-        doc = self._nlp(text)
+    def break_candidates_batch(
+        self,
+        texts: Iterable[str],
+        *,
+        include_clauses: bool,
+        include_phrases: bool = False,
+    ) -> list[BreakAnalysis]:
+        text_batch = tuple(texts)
+        if not text_batch:
+            return []
+
+        self._require_optional_parser(include_clauses, include_phrases)
+        docs = self._nlp.pipe(text_batch)
+        return [
+            self._break_candidates_from_doc(
+                text,
+                doc,
+                include_clauses=include_clauses,
+                include_phrases=include_phrases,
+            )
+            for text, doc in zip(text_batch, docs, strict=True)
+        ]
+
+    def _break_candidates_from_doc(
+        self,
+        text: str,
+        doc: Any,
+        *,
+        include_clauses: bool,
+        include_phrases: bool,
+    ) -> BreakAnalysis:
         sentence_breaks = self._spacy_sentence_candidates_from_doc(text, doc)
         optional_breaks = _spacy_optional_candidates(
             text,
@@ -77,6 +121,12 @@ class SentenceEngine:
             include_phrases=include_phrases,
         )
         return sentence_breaks, optional_breaks
+
+    def _require_optional_parser(self, include_clauses: bool, include_phrases: bool) -> None:
+        if (include_clauses or include_phrases) and not self._has_parser:
+            raise SentenceEngineError(
+                f"optional breaks require a spaCy parser model: {self._model}"
+            )
 
     def _has_sentence_boundaries(self) -> bool:
         return any(self._nlp.has_pipe(name) for name in ("parser", "senter", "sentencizer"))

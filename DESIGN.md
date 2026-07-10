@@ -87,6 +87,11 @@ Other requested models are hard runtime requirements.
 Clause, phrase, and strict modes require a model with the parser pipeline enabled,
 because their candidates depend on POS tags and dependency labels.
 
+The formatter collects projected paragraphs before analysis.
+The spaCy engine processes those paragraphs through `nlp.pipe()` as one batch.
+Alternative engines can implement the batch interface,
+or rely on the per-paragraph compatibility path.
+
 spaCy cold start dominates short interactive runs.
 Importing spaCy and loading the model costs far more than formatting
 a small Markdown selection.

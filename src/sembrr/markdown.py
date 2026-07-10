@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 import tree_sitter_markdown
 from tree_sitter import Language, Node, Parser
 
-from .engine import BreakEngine
+from .engine import BreakAnalysis, BreakEngine
 from .layout import apply_breaks, select_breaks
 from .models import BreakOptions
 from .protect import ProjectedText, inspect_inline
@@ -19,13 +19,13 @@ BLOCK_PARSER.language = Language(tree_sitter_markdown.language())
 def format_markdown(source: str, engine: BreakEngine, options: BreakOptions) -> str:
     lines = source.splitlines(keepends=True)
     paragraph_plans = _paragraph_plans(source, lines)
-    output: list[str] = []
+    parts: list[str | PreparedBlock] = []
     index = 0
 
     while index < len(lines):
         plan = paragraph_plans.get(index)
         if plan is None:
-            output.append(lines[index])
+            parts.append(lines[index])
             index += 1
             continue
 
@@ -35,10 +35,11 @@ def format_markdown(source: str, engine: BreakEngine, options: BreakOptions) -> 
             next_prefix=plan.next_prefix,
             body_lines=_strip_source_prefixes(block.splitlines(), plan.source_prefixes),
         )
-        output.append(format_markdown_block(block, engine, options, prefix_info=prefix_info))
+        prepared = _prepare_block(block, prefix_info=prefix_info)
+        parts.append(block if prepared is None else prepared)
         index = plan.end_row
 
-    return "".join(output)
+    return _format_parts(parts, engine, options)
 
 
 @dataclass(frozen=True)
@@ -225,12 +226,12 @@ def _range_overlaps_preserved(start: int, end: int, preserved: list[range]) -> b
 
 def format_text(source: str, engine: BreakEngine, options: BreakOptions) -> str:
     lines = source.splitlines(keepends=True)
-    output: list[str] = []
+    parts: list[str | PreparedBlock] = []
     index = 0
 
     while index < len(lines):
         if _is_blank(lines[index]):
-            output.append(lines[index])
+            parts.append(lines[index])
             index += 1
             continue
 
@@ -239,9 +240,10 @@ def format_text(source: str, engine: BreakEngine, options: BreakOptions) -> str:
             index += 1
 
         block = "".join(lines[start:index])
-        output.append(format_markdown_block(block, engine, options))
+        prepared = _prepare_block(block)
+        parts.append(block if prepared is None else prepared)
 
-    return "".join(output)
+    return _format_parts(parts, engine, options)
 
 
 def format_markdown_block(
@@ -250,8 +252,19 @@ def format_markdown_block(
     options: BreakOptions,
     prefix_info: PrefixInfo | None = None,
 ) -> str:
-    if not block.strip():
+    prepared = _prepare_block(block, prefix_info=prefix_info)
+    if prepared is None:
         return block
+    return _format_parts([prepared], engine, options)
+
+
+def _prepare_block(
+    block: str,
+    *,
+    prefix_info: PrefixInfo | None = None,
+) -> PreparedBlock | None:
+    if not block.strip():
+        return None
 
     eol = "\r\n" if "\r\n" in block else "\n"
     ends_with_eol = block.endswith(("\n", "\r"))
@@ -261,46 +274,91 @@ def format_markdown_block(
         prefix_info = PrefixInfo("", "", raw_lines)
     body_lines = prefix_info.body_lines
     body_source = "\n".join(body_lines)
+
     body_inspection = inspect_inline(body_source)
     if body_inspection.has_hard_line_break or body_inspection.has_multiline_protected_span:
-        return block
+        return None
 
     text = " ".join(line.strip() for line in body_lines if line.strip())
     if not text:
-        return block
+        return None
 
     projected = body_inspection.projected if text == body_source else inspect_inline(text).projected
-    formatted = _format_projected_prose(projected, engine, options)
+
+    return PreparedBlock(
+        projected=projected,
+        prefix_info=prefix_info,
+        eol=eol,
+        ends_with_eol=ends_with_eol,
+    )
+
+
+def _format_parts(
+    parts: list[str | PreparedBlock],
+    engine: BreakEngine,
+    options: BreakOptions,
+) -> str:
+    analyses = iter(
+        engine.break_candidates_batch(
+            (part.projected.text for part in parts if isinstance(part, PreparedBlock)),
+            include_clauses=options.mode in {"clause", "phrase", "strict"},
+            include_phrases=options.mode in {"phrase", "strict"},
+        )
+    )
+
+    output: list[str] = []
+    for part in parts:
+        if isinstance(part, str):
+            output.append(part)
+            continue
+
+        output.append(_format_prepared_block(part, next(analyses), options))
+
+    return "".join(output)
+
+
+def _format_prepared_block(
+    prepared: PreparedBlock,
+    analysis: BreakAnalysis,
+    options: BreakOptions,
+) -> str:
+    formatted = _format_projected_prose(prepared.projected, analysis, options)
     formatted_lines = formatted.split("\n")
 
     with_prefixes: list[str] = []
     for offset, line in enumerate(formatted_lines):
-        prefix = prefix_info.first_prefix if offset == 0 else prefix_info.next_prefix
+        prefix = (
+            prepared.prefix_info.first_prefix if offset == 0 else prepared.prefix_info.next_prefix
+        )
         with_prefixes.append(prefix + line)
 
-    result = eol.join(with_prefixes)
-    if ends_with_eol:
-        result += eol
+    result = prepared.eol.join(with_prefixes)
+    if prepared.ends_with_eol:
+        result += prepared.eol
     return result
 
 
+@dataclass(frozen=True)
 class PrefixInfo:
-    def __init__(self, first_prefix: str, next_prefix: str, body_lines: list[str]) -> None:
-        self.first_prefix = first_prefix
-        self.next_prefix = next_prefix
-        self.body_lines = body_lines
+    first_prefix: str
+    next_prefix: str
+    body_lines: list[str]
+
+
+@dataclass(frozen=True)
+class PreparedBlock:
+    projected: ProjectedText
+    prefix_info: PrefixInfo
+    eol: str
+    ends_with_eol: bool
 
 
 def _format_projected_prose(
     projected: ProjectedText,
-    engine: BreakEngine,
+    analysis: BreakAnalysis,
     options: BreakOptions,
 ) -> str:
-    sentence_breaks, optional_breaks = engine.break_candidates(
-        projected.text,
-        include_clauses=options.mode in {"clause", "phrase", "strict"},
-        include_phrases=options.mode in {"phrase", "strict"},
-    )
+    sentence_breaks, optional_breaks = analysis
     source_sentence_breaks = [
         replace(candidate, offset=projected.source_offset(candidate.offset))
         for candidate in sentence_breaks

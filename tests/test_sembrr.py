@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import unittest
+from collections.abc import Iterable
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -34,6 +35,22 @@ class FixtureEngine:
         if include_phrases:
             optional_breaks.extend(self.phrase_candidates(text))
         return sentence_breaks, optional_breaks
+
+    def break_candidates_batch(
+        self,
+        texts: Iterable[str],
+        *,
+        include_clauses: bool,
+        include_phrases: bool = False,
+    ) -> list[tuple[list[BreakCandidate], list[BreakCandidate]]]:
+        return [
+            self.break_candidates(
+                text,
+                include_clauses=include_clauses,
+                include_phrases=include_phrases,
+            )
+            for text in texts
+        ]
 
     def sentence_candidates(self, text: str) -> list[BreakCandidate]:
         candidates: list[BreakCandidate] = []
@@ -204,6 +221,26 @@ class RecordingEngine(FixtureEngine):
         )
 
 
+class BatchRecordingEngine(FixtureEngine):
+    def __init__(self) -> None:
+        self.seen_batches: list[list[str]] = []
+
+    def break_candidates_batch(
+        self,
+        texts: Iterable[str],
+        *,
+        include_clauses: bool,
+        include_phrases: bool = False,
+    ) -> list[tuple[list[BreakCandidate], list[BreakCandidate]]]:
+        text_batch = list(texts)
+        self.seen_batches.append(text_batch)
+        return super().break_candidates_batch(
+            text_batch,
+            include_clauses=include_clauses,
+            include_phrases=include_phrases,
+        )
+
+
 class FakeToken:
     def __init__(
         self,
@@ -268,6 +305,8 @@ class SembrrTests(unittest.TestCase):
             "class Engine:\n"
             "    def break_candidates(self, text, *, include_clauses, include_phrases=False):\n"
             "        return [], []\n"
+            "    def break_candidates_batch(self, texts, **kwargs):\n"
+            "        return [([], []) for _ in texts]\n"
             "def section(index):\n"
             "    return (\n"
             "        f'### x.{index} heading (`code`)\\n\\n'\n"
@@ -295,6 +334,21 @@ class SembrrTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_markdown_batches_paragraph_analysis(self) -> None:
+        engine = BatchRecordingEngine()
+        source = "One sentence. Another sentence.\n\nThird sentence. Fourth sentence.\n"
+
+        result = format_markdown(source, engine, BreakOptions())
+
+        self.assertEqual(
+            result,
+            "One sentence.\nAnother sentence.\n\nThird sentence.\nFourth sentence.\n",
+        )
+        self.assertEqual(
+            engine.seen_batches,
+            [["One sentence. Another sentence.", "Third sentence. Fourth sentence."]],
+        )
 
     def test_preserves_inline_code_and_link_source(self) -> None:
         source = "Use [`foo.bar()`](./api.md#foo.bar). Then use `src/a.b.py`.\n"
