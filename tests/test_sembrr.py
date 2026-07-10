@@ -1060,6 +1060,86 @@ class SembrrTests(unittest.TestCase):
         self.assertIn(("semicolon", source.index(";") + 1), summary)
         self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
 
+    def test_clause_mode_keeps_trailing_punctuation_with_parenthetical(self) -> None:
+        source = (
+            "Workers keep the local summary (three fields), "
+            "while reviewers inspect the final report."
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("Workers", "NOUN", "nsubj", "NNS"),
+                ("keep", "VERB", "ROOT", "VBP"),
+                ("the", "DET", "det", "DT"),
+                ("local", "ADJ", "amod", "JJ"),
+                ("summary", "NOUN", "dobj", "NN"),
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("three", "NUM", "nummod", "CD"),
+                ("fields", "NOUN", "appos", "NNS"),
+                (")", "PUNCT", "punct", "-RRB-"),
+                (",", "PUNCT", "punct", ","),
+                ("while", "SCONJ", "mark", "IN"),
+                ("reviewers", "NOUN", "nsubj", "NNS"),
+                ("inspect", "VERB", "advcl", "VBP"),
+                ("the", "DET", "det", "DT"),
+                ("final", "ADJ", "amod", "JJ"),
+                ("report", "NOUN", "dobj", "NN"),
+                (".", "PUNCT", "punct", "."),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+
+        self.assertIn(
+            ("parenthetical-end", source.index(",") + 1),
+            _candidate_summary(candidates),
+        )
+
+    def test_clause_mode_analyzes_inside_paragraph_wrapper(self) -> None:
+        source = (
+            "(Workers publish a summary; reviewers inspect logs — one trace, "
+            "another counter — but operators archive the result.)"
+        )
+        tokens = _fake_doc(
+            source,
+            [
+                ("(", "PUNCT", "punct", "-LRB-"),
+                ("Workers", "NOUN", "nsubj", "NNS"),
+                ("publish", "VERB", "ROOT", "VBP"),
+                ("a", "DET", "det", "DT"),
+                ("summary", "NOUN", "dobj", "NN"),
+                (";", "PUNCT", "punct", ":"),
+                ("reviewers", "NOUN", "nsubj", "NNS"),
+                ("inspect", "VERB", "conj", "VBP"),
+                ("logs", "NOUN", "dobj", "NNS"),
+                ("—", "PUNCT", "punct", ":"),
+                ("one", "NUM", "nummod", "CD"),
+                ("trace", "NOUN", "appos", "NN"),
+                (",", "PUNCT", "punct", ","),
+                ("another", "DET", "det", "DT"),
+                ("counter", "NOUN", "conj", "NN"),
+                ("—", "PUNCT", "punct", ":"),
+                ("but", "CCONJ", "cc", "CC"),
+                ("operators", "NOUN", "nsubj", "NNS"),
+                ("archive", "VERB", "conj", "VBP"),
+                ("the", "DET", "det", "DT"),
+                ("result", "NOUN", "dobj", "NN"),
+                (".", "PUNCT", "punct", "."),
+                (")", "PUNCT", "punct", "-RRB-"),
+            ],
+        )
+
+        candidates = _spacy_clause_candidates(source, tokens)
+        summary = _candidate_summary(candidates)
+
+        self.assertEqual(
+            [offset for kind, offset in summary if kind == "dash"],
+            [source.index("—") + 1, source.rindex("—") + 1],
+        )
+        self.assertFalse(
+            {"parenthetical-start", "parenthetical-end"} & {kind for kind, _ in summary}
+        )
+
     def test_clause_mode_ignores_unmatched_parenthesis_for_depth(self) -> None:
         source = "Authors ship a draft (temporary note; readers review the result."
         tokens = _fake_doc(

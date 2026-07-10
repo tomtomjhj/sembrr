@@ -78,7 +78,12 @@ def _spacy_optional_candidates(
 def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
     tokens: list[Any] = list(doc)
     parenthesis_pairs = _parenthesis_pairs(tokens)
-    parenthesis_depths = _parenthesis_depths(tokens, parenthesis_pairs)
+    wrapper_parentheses = _wrapper_parentheses(tokens, parenthesis_pairs)
+    parenthesis_depths = _parenthesis_depths(
+        tokens,
+        parenthesis_pairs,
+        ignored=wrapper_parentheses,
+    )
     candidates: list[BreakCandidate] = []
 
     for index, token in enumerate(tokens):
@@ -87,7 +92,12 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
         offset = int(token.idx)
         parenthesis_depth = parenthesis_depths[index]
 
-        if token_text == "(" and index in parenthesis_pairs and parenthesis_depth == 0:
+        if (
+            token_text == "("
+            and index in parenthesis_pairs
+            and index not in wrapper_parentheses
+            and parenthesis_depth == 0
+        ):
             candidates.append(
                 BreakCandidate(
                     offset=offset,
@@ -98,8 +108,13 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
             )
             continue
 
-        if token_text == ")" and index in parenthesis_pairs and parenthesis_depth == 1:
-            close_offset = _token_end(token)
+        if (
+            token_text == ")"
+            and index in parenthesis_pairs
+            and index not in wrapper_parentheses
+            and parenthesis_depth == 1
+        ):
+            close_offset = _parenthetical_end_offset(text, _token_end(token))
             if close_offset < len(text) and text[close_offset].isspace():
                 candidates.append(
                     BreakCandidate(
@@ -183,7 +198,11 @@ def _spacy_clause_candidates(text: str, doc: Any) -> list[BreakCandidate]:
 def _spacy_phrase_candidates(text: str, doc: Any) -> list[BreakCandidate]:
     tokens: list[Any] = list(doc)
     parenthesis_pairs = _parenthesis_pairs(tokens)
-    parenthesis_depths = _parenthesis_depths(tokens, parenthesis_pairs)
+    parenthesis_depths = _parenthesis_depths(
+        tokens,
+        parenthesis_pairs,
+        ignored=_wrapper_parentheses(tokens, parenthesis_pairs),
+    )
     candidates: list[BreakCandidate] = []
 
     for index, token in enumerate(tokens):
@@ -309,19 +328,47 @@ def _parenthesis_pairs(tokens: list[Any]) -> dict[int, int]:
     return pairs
 
 
-def _parenthesis_depths(tokens: list[Any], parenthesis_pairs: dict[int, int]) -> list[int]:
+def _wrapper_parentheses(tokens: list[Any], parenthesis_pairs: dict[int, int]) -> frozenset[int]:
+    if not tokens or str(tokens[0].text) != "(":
+        return frozenset()
+
+    close_index = parenthesis_pairs.get(0)
+    if close_index is None:
+        return frozenset()
+
+    trailing_tokens = tokens[close_index + 1 :]
+    if any(str(token.text) not in {".", "!", "?"} for token in trailing_tokens):
+        return frozenset()
+
+    return frozenset({0, close_index})
+
+
+def _parenthesis_depths(
+    tokens: list[Any],
+    parenthesis_pairs: dict[int, int],
+    *,
+    ignored: frozenset[int] = frozenset(),
+) -> list[int]:
     depths: list[int] = []
     depth = 0
 
     for index, token in enumerate(tokens):
         token_text = str(token.text)
         depths.append(depth)
-        if token_text == "(" and index in parenthesis_pairs:
+        if token_text == "(" and index in parenthesis_pairs and index not in ignored:
             depth += 1
-        elif token_text == ")" and index in parenthesis_pairs and depth > 0:
+        elif (
+            token_text == ")" and index in parenthesis_pairs and index not in ignored and depth > 0
+        ):
             depth -= 1
 
     return depths
+
+
+def _parenthetical_end_offset(text: str, offset: int) -> int:
+    while offset < len(text) and text[offset] in ",;:":
+        offset += 1
+    return offset
 
 
 def _clause_marker_candidate(
