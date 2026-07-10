@@ -561,6 +561,23 @@ class SembrrTests(unittest.TestCase):
         expected = "One sentence.\nAnother sentence.\n\nLast sentence.\nDone.\n"
         self.assertEqual(format_text(source, ENGINE, BreakOptions()), expected)
 
+    def test_text_mode_does_not_project_markdown(self) -> None:
+        engine = RecordingEngine()
+        source = "One sentence. `Two sentence. Three sentence.` Four sentence.\n"
+
+        format_text(source, engine, BreakOptions())
+
+        self.assertEqual(
+            engine.seen_text,
+            ["One sentence. `Two sentence. Three sentence.` Four sentence."],
+        )
+
+    def test_text_mode_ignores_markdown_hard_breaks(self) -> None:
+        source = "One sentence.  \nAnother sentence.\n"
+        expected = "One sentence.\nAnother sentence.\n"
+
+        self.assertEqual(format_text(source, ENGINE, BreakOptions()), expected)
+
     def test_clause_mode_selects_optional_breaks(self) -> None:
         source = (
             "The formatter keeps Markdown intact; it breaks long prose at semantic boundaries, "

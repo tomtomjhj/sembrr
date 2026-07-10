@@ -35,7 +35,7 @@ def format_markdown(source: str, engine: BreakEngine, options: BreakOptions) -> 
             next_prefix=plan.next_prefix,
             body_lines=_strip_source_prefixes(block.splitlines(), plan.source_prefixes),
         )
-        prepared = _prepare_block(block, prefix_info=prefix_info)
+        prepared = _prepare_block(block, prefix_info=prefix_info, markdown=True)
         parts.append(block if prepared is None else prepared)
         index = plan.end_row
 
@@ -240,7 +240,7 @@ def format_text(source: str, engine: BreakEngine, options: BreakOptions) -> str:
             index += 1
 
         block = "".join(lines[start:index])
-        prepared = _prepare_block(block)
+        prepared = _prepare_block(block, markdown=False)
         parts.append(block if prepared is None else prepared)
 
     return _format_parts(parts, engine, options)
@@ -252,7 +252,7 @@ def format_markdown_block(
     options: BreakOptions,
     prefix_info: PrefixInfo | None = None,
 ) -> str:
-    prepared = _prepare_block(block, prefix_info=prefix_info)
+    prepared = _prepare_block(block, prefix_info=prefix_info, markdown=True)
     if prepared is None:
         return block
     return _format_parts([prepared], engine, options)
@@ -262,6 +262,7 @@ def _prepare_block(
     block: str,
     *,
     prefix_info: PrefixInfo | None = None,
+    markdown: bool,
 ) -> PreparedBlock | None:
     if not block.strip():
         return None
@@ -275,15 +276,26 @@ def _prepare_block(
     body_lines = prefix_info.body_lines
     body_source = "\n".join(body_lines)
 
-    body_inspection = inspect_inline(body_source)
-    if body_inspection.has_hard_line_break or body_inspection.has_multiline_protected_span:
+    body_inspection = inspect_inline(body_source) if markdown else None
+    if body_inspection is not None and (
+        body_inspection.has_hard_line_break or body_inspection.has_multiline_protected_span
+    ):
         return None
 
     text = " ".join(line.strip() for line in body_lines if line.strip())
     if not text:
         return None
 
-    projected = body_inspection.projected if text == body_source else inspect_inline(text).projected
+    if body_inspection is None:
+        projected = ProjectedText(
+            source=text,
+            text=text,
+            source_offsets=tuple(range(len(text) + 1)),
+        )
+    else:
+        projected = (
+            body_inspection.projected if text == body_source else inspect_inline(text).projected
+        )
 
     return PreparedBlock(
         projected=projected,

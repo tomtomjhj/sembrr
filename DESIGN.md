@@ -74,6 +74,10 @@ A missed formatting opportunity is better than a bad rewrite.
 This includes paragraphs with Markdown hard breaks
 or multi-line atomic inline spans.
 
+Plain text mode groups lines into paragraphs at blank lines.
+It projects each paragraph directly into the prose engine,
+so Markdown-looking characters have no special meaning in that mode.
+
 ## NLP Engine
 
 Sembrr uses spaCy with `en_core_web_sm`.
