@@ -13,11 +13,10 @@ from sembrr.breaks import (
     BreakOptions,
     SentenceEngine,
     SentenceEngineError,
-    _spacy_clause_candidates,
-    _spacy_phrase_candidates,
     format_prose,
     select_breaks,
 )
+from sembrr.candidates import _spacy_clause_candidates, _spacy_phrase_candidates
 from sembrr.cli import main
 from sembrr.markdown import format_markdown, format_text
 

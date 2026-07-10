@@ -5,7 +5,9 @@ from dataclasses import dataclass, replace
 import tree_sitter_markdown
 from tree_sitter import Language, Node, Parser
 
-from .breaks import BreakOptions, SentenceEngine, apply_breaks, select_breaks
+from .engine import BreakEngine
+from .layout import apply_breaks, select_breaks
+from .models import BreakOptions
 from .protect import ProjectedText, inspect_inline
 
 PRESERVED_PREFIX_NODE_TYPES = {"block_continuation", "block_quote_marker"}
@@ -14,7 +16,7 @@ BLOCK_PARSER = Parser()
 BLOCK_PARSER.language = Language(tree_sitter_markdown.language())
 
 
-def format_markdown(source: str, engine: SentenceEngine, options: BreakOptions) -> str:
+def format_markdown(source: str, engine: BreakEngine, options: BreakOptions) -> str:
     lines = source.splitlines(keepends=True)
     paragraph_plans = _paragraph_plans(source, lines)
     output: list[str] = []
@@ -221,7 +223,7 @@ def _range_overlaps_preserved(start: int, end: int, preserved: list[range]) -> b
     return any(start in item or (end - 1) in item for item in preserved)
 
 
-def format_text(source: str, engine: SentenceEngine, options: BreakOptions) -> str:
+def format_text(source: str, engine: BreakEngine, options: BreakOptions) -> str:
     lines = source.splitlines(keepends=True)
     output: list[str] = []
     index = 0
@@ -244,7 +246,7 @@ def format_text(source: str, engine: SentenceEngine, options: BreakOptions) -> s
 
 def format_markdown_block(
     block: str,
-    engine: SentenceEngine,
+    engine: BreakEngine,
     options: BreakOptions,
     prefix_info: PrefixInfo | None = None,
 ) -> str:
@@ -291,7 +293,7 @@ class PrefixInfo:
 
 def _format_projected_prose(
     projected: ProjectedText,
-    engine: SentenceEngine,
+    engine: BreakEngine,
     options: BreakOptions,
 ) -> str:
     sentence_breaks, optional_breaks = engine.break_candidates(

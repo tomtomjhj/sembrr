@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .breaks import MODES, BreakOptions, SentenceEngine, SentenceEngineError
+from .engine import SentenceEngine, SentenceEngineError
 from .markdown import format_markdown, format_text
+from .models import MODES, BreakOptions
 
 
 def _positive_int(value: str) -> int:
