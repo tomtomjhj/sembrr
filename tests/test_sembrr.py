@@ -248,6 +248,18 @@ class SembrrTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "One sentence.\nAnother sentence.\n")
 
+    def test_cli_handles_closed_downstream_pipe(self) -> None:
+        with (
+            patch("sembrr.cli.SentenceEngine", return_value=ENGINE),
+            patch("sys.stdin", StringIO("One sentence. Another sentence.\n")),
+            patch("sys.stdout") as stdout,
+        ):
+            stdout.write.side_effect = BrokenPipeError
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        stdout.write.assert_called_once_with("One sentence.\nAnother sentence.\n")
+
     def test_markdown_parser_survives_large_shallow_document(self) -> None:
         code = (
             "import sys\n"

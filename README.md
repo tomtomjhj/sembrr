@@ -55,6 +55,14 @@ at word boundaries when semantic breaks are not enough:
 sembrr --mode strict --target-segment-chars 80 < notes.md
 ```
 
+## Exit Status
+
+`sembrr` exits with status 0 after writing its output
+or when a downstream command closes the pipe early.
+It exits with status 2 for invalid arguments
+or an unavailable spaCy model,
+and with status 130 after an interrupt.
+
 ## Development
 
 ```sh

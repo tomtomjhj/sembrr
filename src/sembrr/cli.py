@@ -53,11 +53,13 @@ def main(argv: list[str] | None = None) -> int:
             result = format_text(source, engine, options)
         else:
             result = format_markdown(source, engine, options)
+        sys.stdout.write(result)
+    except BrokenPipeError:
+        return 0
     except KeyboardInterrupt:
         return 130
     except SentenceEngineError as error:
         print(f"sembrr: {error}", file=sys.stderr)
         return 2
 
-    sys.stdout.write(result)
     return 0
