@@ -4,24 +4,81 @@ from bisect import bisect_left
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+Mode = Literal["sentence", "clause", "phrase", "strict"]
+MODES: tuple[Mode, ...] = ("sentence", "clause", "phrase", "strict")
+
+CandidateKind = Literal[
+    "sentence",
+    "semicolon",
+    "finite_coordinate",
+    "colon",
+    "dash",
+    "parenthetical-start",
+    "parenthetical-end",
+    "comma_clause",
+    "subordinate",
+    "coordinate",
+    "relative",
+    "example_phrase",
+    "gerund_coordinate",
+    "nominal_coordinate",
+    "infinitive_phrase",
+    "participial_phrase",
+    "comma_phrase",
+    "word",
+]
+CANDIDATE_KINDS: frozenset[str] = frozenset(
+    {
+        "sentence",
+        "semicolon",
+        "finite_coordinate",
+        "colon",
+        "dash",
+        "parenthetical-start",
+        "parenthetical-end",
+        "comma_clause",
+        "subordinate",
+        "coordinate",
+        "relative",
+        "example_phrase",
+        "gerund_coordinate",
+        "nominal_coordinate",
+        "infinitive_phrase",
+        "participial_phrase",
+        "comma_phrase",
+        "word",
+    }
+)
 
 
 @dataclass(frozen=True)
 class BreakCandidate:
     offset: int
-    kind: str
+    kind: CandidateKind
     confidence: float
     reason: str
     mandatory: bool = False
 
+    def __post_init__(self) -> None:
+        if self.kind not in CANDIDATE_KINDS:
+            raise ValueError(f"unknown break candidate kind: {self.kind}")
+
 
 @dataclass(frozen=True)
 class BreakOptions:
-    mode: str = "phrase"
+    mode: Mode = "phrase"
     target_segment_chars: int = 100
     min_clause_chars: int = 24
-    model: str = "en_core_web_sm"
+
+    def __post_init__(self) -> None:
+        if self.mode not in MODES:
+            raise ValueError(f"unknown formatting mode: {self.mode}")
+        if self.target_segment_chars <= 0:
+            raise ValueError("target segment characters must be greater than zero")
+        if self.min_clause_chars <= 0:
+            raise ValueError("minimum clause characters must be greater than zero")
 
 
 @dataclass(frozen=True)
@@ -42,7 +99,7 @@ class LayoutState:
 @dataclass(frozen=True)
 class ClauseMarkerRule:
     words: frozenset[str]
-    kind: str
+    kind: CandidateKind
     confidence: float
     reason: str
     dependencies: frozenset[str] = frozenset()
