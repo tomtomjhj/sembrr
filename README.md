@@ -7,7 +7,7 @@ write stdout,
 and never edit files in place.
 
 The default mode keeps sentence boundaries
-and adds conservative clause and phrase breaks inside long sentences.
+and adds syntax-scored breaks inside long sentences.
 It is not a width-based wrapper.
 
 ## Installation
@@ -42,18 +42,16 @@ Use sentence-only mode:
 sembrr --mode sentence < notes.md
 ```
 
-Use clause mode for fewer breaks:
-
-```sh
-sembrr --mode clause < notes.md
-```
-
 Use strict mode to enforce `--target-segment-chars`
-at word boundaries when semantic breaks are not enough:
+at safe token boundaries when semantic mode permits an overlong segment:
 
 ```sh
 sembrr --mode strict --target-segment-chars 80 < notes.md
 ```
+
+Use `--min-segment-chars` to discourage short lines.
+The minimum is a soft preference,
+so a strong syntactic boundary can still produce a shorter segment.
 
 ## Exit Status
 

@@ -5,21 +5,17 @@ from __future__ import annotations
 from .engine import BreakEngine, SentenceEngine, SentenceEngineError
 from .layout import apply_breaks, select_breaks
 from .models import (
-    CANDIDATE_KINDS,
     MODES,
-    BreakCandidate,
+    BreakBoundary,
     BreakOptions,
-    CandidateKind,
     Mode,
 )
 
 __all__ = [
-    "CANDIDATE_KINDS",
     "MODES",
-    "BreakCandidate",
+    "BreakBoundary",
     "BreakEngine",
     "BreakOptions",
-    "CandidateKind",
     "Mode",
     "SentenceEngine",
     "SentenceEngineError",
@@ -30,10 +26,9 @@ __all__ = [
 
 
 def format_prose(text: str, engine: BreakEngine, options: BreakOptions) -> str:
-    sentence_breaks, optional_breaks = engine.break_candidates(
+    boundaries = engine.break_boundaries(
         text,
-        include_clauses=options.mode in {"clause", "phrase", "strict"},
-        include_phrases=options.mode in {"phrase", "strict"},
+        include_optional=options.mode != "sentence",
     )
-    selected = select_breaks(text, sentence_breaks, optional_breaks, options)
+    selected = select_breaks(text, boundaries, options)
     return apply_breaks(text, selected)

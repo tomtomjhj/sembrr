@@ -94,15 +94,10 @@ def _paragraph_plan(
             source_prefixes.append(continuation_prefixes.get(row, ""))
 
     first_prefix = source_prefixes[0]
-    existing_continuations = [
-        prefix
-        for row, prefix in sorted(continuation_prefixes.items())
-        if start_row < row < end_row and prefix
-    ]
-    next_prefix = (
-        existing_continuations[0]
-        if existing_continuations
-        else _synthesize_next_prefix(paragraph, source_bytes, line_start_bytes[start_row])
+    next_prefix = _synthesize_next_prefix(
+        paragraph,
+        source_bytes,
+        line_start_bytes[start_row],
     )
 
     return ParagraphPlan(
@@ -311,10 +306,9 @@ def _format_parts(
     options: BreakOptions,
 ) -> str:
     analyses = iter(
-        engine.break_candidates_batch(
+        engine.break_boundaries_batch(
             (part.projected.text for part in parts if isinstance(part, PreparedBlock)),
-            include_clauses=options.mode in {"clause", "phrase", "strict"},
-            include_phrases=options.mode in {"phrase", "strict"},
+            include_optional=options.mode != "sentence",
         )
     )
 
@@ -334,7 +328,14 @@ def _format_prepared_block(
     analysis: BreakAnalysis,
     options: BreakOptions,
 ) -> str:
-    formatted = _format_projected_prose(prepared.projected, analysis, options)
+    body_options = replace(
+        options,
+        target_segment_chars=max(
+            1,
+            options.target_segment_chars - len(prepared.prefix_info.first_prefix),
+        ),
+    )
+    formatted = _format_projected_prose(prepared.projected, analysis, body_options)
     formatted_lines = formatted.split("\n")
 
     with_prefixes: list[str] = []
@@ -370,21 +371,14 @@ def _format_projected_prose(
     analysis: BreakAnalysis,
     options: BreakOptions,
 ) -> str:
-    sentence_breaks, optional_breaks = analysis
-    source_sentence_breaks = [
+    source_boundaries = [
         replace(candidate, offset=projected.source_offset(candidate.offset))
-        for candidate in sentence_breaks
-    ]
-    source_optional_breaks = [
-        replace(candidate, offset=projected.source_offset(candidate.offset))
-        for candidate in optional_breaks
+        for candidate in analysis
     ]
     selected = select_breaks(
         projected.source,
-        source_sentence_breaks,
-        source_optional_breaks,
+        source_boundaries,
         options,
-        protected_spans=projected.protected_spans,
     )
     return apply_breaks(projected.source, selected)
 

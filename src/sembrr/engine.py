@@ -5,27 +5,25 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol
 
-from .candidates import _dedupe_candidates, _spacy_optional_candidates
-from .models import BreakCandidate
+from .candidates import dedupe_boundaries, spacy_optional_boundaries
+from .models import BreakBoundary
 
-BreakAnalysis = tuple[list[BreakCandidate], list[BreakCandidate]]
+BreakAnalysis = list[BreakBoundary]
 
 
 class BreakEngine(Protocol):
-    def break_candidates(
+    def break_boundaries(
         self,
         text: str,
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
+        include_optional: bool,
     ) -> BreakAnalysis: ...
 
-    def break_candidates_batch(
+    def break_boundaries_batch(
         self,
         texts: Iterable[str],
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
+        include_optional: bool,
     ) -> list[BreakAnalysis]: ...
 
 
@@ -34,7 +32,7 @@ class SentenceEngineError(RuntimeError):
 
 
 class SentenceEngine:
-    """Find sentence and clause boundaries with the requested spaCy model."""
+    """Find and score line-break boundaries with the requested spaCy model."""
 
     def __init__(self, model: str = "en_core_web_sm") -> None:
         self._model = model
@@ -50,105 +48,80 @@ class SentenceEngine:
         if not self._has_sentence_boundaries():
             raise SentenceEngineError(f"spaCy model does not provide sentence boundaries: {model}")
 
-    def sentence_candidates(self, text: str) -> list[BreakCandidate]:
-        if not text:
-            return []
-
-        sentence_breaks, _ = self.break_candidates(text, include_clauses=False)
-        return sentence_breaks
-
-    def clause_candidates(self, text: str) -> list[BreakCandidate]:
-        if not text:
-            return []
-
-        _, clause_breaks = self.break_candidates(text, include_clauses=True)
-        return clause_breaks
-
-    def break_candidates(
+    def break_boundaries(
         self,
         text: str,
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
+        include_optional: bool,
     ) -> BreakAnalysis:
         if not text:
-            return [], []
+            return []
 
-        self._require_optional_parser(include_clauses, include_phrases)
-        return self._break_candidates_from_doc(
+        self._require_optional_parser(include_optional)
+        return self._break_boundaries_from_doc(
             text,
             self._nlp(text),
-            include_clauses=include_clauses,
-            include_phrases=include_phrases,
+            include_optional=include_optional,
         )
 
-    def break_candidates_batch(
+    def break_boundaries_batch(
         self,
         texts: Iterable[str],
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
+        include_optional: bool,
     ) -> list[BreakAnalysis]:
         text_batch = tuple(texts)
         if not text_batch:
             return []
 
-        self._require_optional_parser(include_clauses, include_phrases)
+        self._require_optional_parser(include_optional)
         docs = self._nlp.pipe(text_batch)
         return [
-            self._break_candidates_from_doc(
+            self._break_boundaries_from_doc(
                 text,
                 doc,
-                include_clauses=include_clauses,
-                include_phrases=include_phrases,
+                include_optional=include_optional,
             )
             for text, doc in zip(text_batch, docs, strict=True)
         ]
 
-    def _break_candidates_from_doc(
+    def _break_boundaries_from_doc(
         self,
         text: str,
         doc: Any,
         *,
-        include_clauses: bool,
-        include_phrases: bool,
+        include_optional: bool,
     ) -> BreakAnalysis:
-        sentence_breaks = self._spacy_sentence_candidates_from_doc(text, doc)
-        optional_breaks = _spacy_optional_candidates(
-            text,
-            doc,
-            include_clauses=include_clauses,
-            include_phrases=include_phrases,
-        )
-        return sentence_breaks, optional_breaks
+        boundaries = self._spacy_sentence_boundaries_from_doc(text, doc)
+        if include_optional:
+            boundaries.extend(spacy_optional_boundaries(text, doc))
+        return dedupe_boundaries(boundaries, len(text))
 
-    def _require_optional_parser(self, include_clauses: bool, include_phrases: bool) -> None:
-        if (include_clauses or include_phrases) and not self._has_parser:
+    def _require_optional_parser(self, include_optional: bool) -> None:
+        if include_optional and not self._has_parser:
             raise SentenceEngineError(
-                f"optional breaks require a spaCy parser model: {self._model}"
+                f"semantic breaks require a spaCy parser model: {self._model}"
             )
 
     def _has_sentence_boundaries(self) -> bool:
         return any(self._nlp.has_pipe(name) for name in ("parser", "senter", "sentencizer"))
 
-    def _spacy_sentence_candidates_from_doc(self, text: str, doc: Any) -> list[BreakCandidate]:
-        candidates: list[BreakCandidate] = []
+    def _spacy_sentence_boundaries_from_doc(self, text: str, doc: Any) -> list[BreakBoundary]:
+        boundaries: list[BreakBoundary] = []
 
         for sent in doc.sents:
             offset = sent.end_char
             offset = _after_closing_punctuation(text, offset)
-            if offset < len(text):
-                candidates.append(
-                    BreakCandidate(
+            if offset < len(text) and text[offset].isspace():
+                boundaries.append(
+                    BreakBoundary(
                         offset=offset,
-                        kind="sentence",
-                        confidence=1.0,
-                        reason="spaCy sentence boundary",
+                        penalty=0,
                         mandatory=True,
                     )
                 )
 
-        return _dedupe_candidates(candidates, len(text))
+        return boundaries
 
 
 CLOSING_SENTENCE_MARKUP = "\"')]}"

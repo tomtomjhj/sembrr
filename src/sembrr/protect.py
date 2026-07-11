@@ -108,7 +108,7 @@ def _project_text_from_tree(text: str, tree: Tree) -> ProjectedText:
     while cursor < len(text):
         protected_end = protected_by_start.get(cursor)
         if protected_end is not None:
-            placeholder = f"{placeholder_prefix}{atom_index}_"
+            placeholder = f"{placeholder_prefix}{atom_index}X"
             atom_index += 1
             pieces.append(placeholder)
             source_offsets.extend(protected_end for _ in placeholder)
@@ -158,8 +158,8 @@ def _span_by_start(spans: list[tuple[int, int]]) -> dict[int, int]:
 def _placeholder_prefix(text: str, count: int) -> str:
     nonce = 0
     while True:
-        prefix = f"SEMBRRATOM{nonce}_"
-        if all(f"{prefix}{index}_" not in text for index in range(count)):
+        prefix = f"SEMBRRATOM{nonce}X"
+        if all(f"{prefix}{index}X" not in text for index in range(count)):
             return prefix
         nonce += 1
 

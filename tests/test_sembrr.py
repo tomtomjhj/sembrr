@@ -7,196 +7,41 @@ from collections.abc import Iterable
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from sembrr.breaks import (
-    BreakCandidate,
+    BreakBoundary,
     BreakOptions,
     SentenceEngine,
     SentenceEngineError,
-    format_prose,
     select_breaks,
 )
-from sembrr.candidates import _spacy_clause_candidates, _spacy_phrase_candidates
+from sembrr.candidates import spacy_optional_boundaries
 from sembrr.cli import main
+from sembrr.layout import _content_extents
 from sembrr.markdown import format_markdown, format_text
 
 
 class FixtureEngine:
-    def break_candidates(
+    def break_boundaries(
         self,
         text: str,
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
-    ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
-        sentence_breaks = self.sentence_candidates(text)
-        optional_breaks = self.clause_candidates(text) if include_clauses else []
-        if include_phrases:
-            optional_breaks.extend(self.phrase_candidates(text))
-        return sentence_breaks, optional_breaks
+        include_optional: bool,
+    ) -> list[BreakBoundary]:
+        boundaries = _sentence_boundaries(text)
+        if include_optional:
+            boundaries.extend(_whitespace_boundaries(text))
+        return boundaries
 
-    def break_candidates_batch(
+    def break_boundaries_batch(
         self,
         texts: Iterable[str],
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
-    ) -> list[tuple[list[BreakCandidate], list[BreakCandidate]]]:
-        return [
-            self.break_candidates(
-                text,
-                include_clauses=include_clauses,
-                include_phrases=include_phrases,
-            )
-            for text in texts
-        ]
-
-    def sentence_candidates(self, text: str) -> list[BreakCandidate]:
-        candidates: list[BreakCandidate] = []
-        index = 0
-
-        while index < len(text):
-            if text[index] not in ".!?":
-                index += 1
-                continue
-
-            offset = _after_closing_punctuation(text, index + 1)
-            if offset < len(text) and text[offset].isspace():
-                candidates.append(
-                    BreakCandidate(
-                        offset=offset,
-                        kind="sentence",
-                        confidence=1.0,
-                        reason="fixture sentence boundary",
-                        mandatory=True,
-                    )
-                )
-
-            index = offset + 1
-
-        return candidates
-
-    def phrase_candidates(self, text: str) -> list[BreakCandidate]:
-        candidates: list[BreakCandidate] = []
-
-        like = text.find(" like ")
-        if like >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=like + 1,
-                    kind="example_phrase",
-                    confidence=0.55,
-                    reason="fixture example phrase boundary",
-                )
-            )
-
-        or_splitting = text.find(" or splitting")
-        if or_splitting >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=or_splitting + 1,
-                    kind="gerund_coordinate",
-                    confidence=0.55,
-                    reason="fixture gerund coordinate boundary",
-                )
-            )
-
-        finite_coordinate = text.find(" and every ")
-        if finite_coordinate >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=finite_coordinate + 1,
-                    kind="finite_coordinate",
-                    confidence=0.65,
-                    reason="fixture finite coordinate boundary",
-                )
-            )
-
-        nominal_coordinate = text.find(" and the static-analysis ")
-        if nominal_coordinate >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=nominal_coordinate + 1,
-                    kind="nominal_coordinate",
-                    confidence=0.5,
-                    reason="fixture nominal coordinate boundary",
-                )
-            )
-
-        to_preserve = text.find(" to preserve ")
-        if to_preserve >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=to_preserve + 1,
-                    kind="infinitive_phrase",
-                    confidence=0.45,
-                    reason="fixture infinitive phrase boundary",
-                )
-            )
-
-        using_parser = text.find(" using parser ")
-        if using_parser >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=using_parser + 1,
-                    kind="participial_phrase",
-                    confidence=0.45,
-                    reason="fixture participial phrase boundary",
-                )
-            )
-
-        cursor = text.find(",")
-        while cursor >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=cursor + 1,
-                    kind="comma_phrase",
-                    confidence=0.35,
-                    reason="fixture comma phrase boundary",
-                )
-            )
-            cursor = text.find(",", cursor + 1)
-
-        return candidates
-
-    def clause_candidates(self, text: str) -> list[BreakCandidate]:
-        candidates: list[BreakCandidate] = []
-
-        semicolon = text.find(";")
-        if semicolon >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=semicolon + 1,
-                    kind="semicolon",
-                    confidence=0.95,
-                    reason="fixture semicolon boundary",
-                )
-            )
-
-        comma_and = text.find(", and ")
-        if comma_and >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=comma_and + 2,
-                    kind="coordinate",
-                    confidence=0.78,
-                    reason="fixture coordinate boundary",
-                )
-            )
-
-        comma_so = text.find(", so ")
-        if comma_so >= 0:
-            candidates.append(
-                BreakCandidate(
-                    offset=comma_so + 2,
-                    kind="comma_clause",
-                    confidence=0.78,
-                    reason="fixture comma-led finite clause boundary",
-                )
-            )
-
-        return candidates
+        include_optional: bool,
+    ) -> list[list[BreakBoundary]]:
+        return [self.break_boundaries(text, include_optional=include_optional) for text in texts]
 
 
 ENGINE = FixtureEngine()
@@ -206,57 +51,46 @@ class RecordingEngine(FixtureEngine):
     def __init__(self) -> None:
         self.seen_text: list[str] = []
 
-    def break_candidates(
+    def break_boundaries(
         self,
         text: str,
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
-    ) -> tuple[list[BreakCandidate], list[BreakCandidate]]:
+        include_optional: bool,
+    ) -> list[BreakBoundary]:
         self.seen_text.append(text)
-        return super().break_candidates(
-            text,
-            include_clauses=include_clauses,
-            include_phrases=include_phrases,
-        )
+        return super().break_boundaries(text, include_optional=include_optional)
 
 
 class BatchRecordingEngine(FixtureEngine):
     def __init__(self) -> None:
         self.seen_batches: list[list[str]] = []
 
-    def break_candidates_batch(
+    def break_boundaries_batch(
         self,
         texts: Iterable[str],
         *,
-        include_clauses: bool,
-        include_phrases: bool = False,
-    ) -> list[tuple[list[BreakCandidate], list[BreakCandidate]]]:
+        include_optional: bool,
+    ) -> list[list[BreakBoundary]]:
         text_batch = list(texts)
         self.seen_batches.append(text_batch)
-        return super().break_candidates_batch(
+        return super().break_boundaries_batch(
             text_batch,
-            include_clauses=include_clauses,
-            include_phrases=include_phrases,
+            include_optional=include_optional,
         )
 
 
 class FakeToken:
-    def __init__(
-        self,
-        text: str,
-        idx: int,
-        pos: str = "NOUN",
-        dep: str = "",
-        tag: str = "NN",
-    ) -> None:
+    def __init__(self, text: str, idx: int, index: int, pos: str) -> None:
         self.text = text
         self.idx = idx
+        self.i = index
         self.pos_ = pos
-        self.dep_ = dep
-        self.tag_ = tag
-        self.lower_ = text.lower()
         self.head = self
+
+
+class FakeDoc:
+    def __init__(self, tokens: list[FakeToken]) -> None:
+        self.sents = [tokens]
 
 
 class SembrrTests(unittest.TestCase):
@@ -264,12 +98,23 @@ class SembrrTests(unittest.TestCase):
         with self.assertRaisesRegex(SentenceEngineError, "spaCy model not found"):
             SentenceEngine(model="__missing_model__")
 
+    def test_sentence_boundaries_require_source_whitespace(self) -> None:
+        source = "First sentence.Second sentence."
+        doc = SimpleNamespace(
+            sents=[
+                SimpleNamespace(end_char=source.index(".") + 1),
+                SimpleNamespace(end_char=len(source)),
+            ]
+        )
+        engine = SentenceEngine.__new__(SentenceEngine)
+
+        self.assertEqual(engine._spacy_sentence_boundaries_from_doc(source, doc), [])
+
     def test_formats_stdin_style_markdown_paragraph(self) -> None:
         source = "One sentence. Another sentence.\n"
-        self.assertEqual(
-            format_markdown(source, ENGINE, BreakOptions()),
-            "One sentence.\nAnother sentence.\n",
-        )
+        expected = "One sentence.\nAnother sentence.\n"
+
+        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
     def test_cli_reads_stdin_and_writes_stdout(self) -> None:
         output = StringIO()
@@ -303,10 +148,10 @@ class SembrrTests(unittest.TestCase):
             "from sembrr.breaks import BreakOptions\n"
             "from sembrr.markdown import format_markdown\n"
             "class Engine:\n"
-            "    def break_candidates(self, text, *, include_clauses, include_phrases=False):\n"
-            "        return [], []\n"
-            "    def break_candidates_batch(self, texts, **kwargs):\n"
-            "        return [([], []) for _ in texts]\n"
+            "    def break_boundaries(self, text, *, include_optional):\n"
+            "        return []\n"
+            "    def break_boundaries_batch(self, texts, **kwargs):\n"
+            "        return [[] for _ in texts]\n"
             "def section(index):\n"
             "    return (\n"
             "        f'### x.{index} heading (`code`)\\n\\n'\n"
@@ -350,51 +195,145 @@ class SembrrTests(unittest.TestCase):
             [["One sentence. Another sentence.", "Third sentence. Fourth sentence."]],
         )
 
-    def test_preserves_inline_code_and_link_source(self) -> None:
-        source = "Use [`foo.bar()`](./api.md#foo.bar). Then use `src/a.b.py`.\n"
-        self.assertEqual(
-            format_markdown(source, ENGINE, BreakOptions()),
-            "Use [`foo.bar()`](./api.md#foo.bar).\nThen use `src/a.b.py`.\n",
-        )
+    def test_preserves_atomic_markdown_source(self) -> None:
+        cases = [
+            (
+                "Use [`foo.bar()`](./api.md#foo.bar). Then use `src/a.b.py`.\n",
+                "Use [`foo.bar()`](./api.md#foo.bar).\nThen use `src/a.b.py`.\n",
+            ),
+            (
+                "Use [v1.2][]. Then continue.\n",
+                "Use [v1.2][].\nThen continue.\n",
+            ),
+            (
+                "Before. After.\n\n```py\na.b()\n```\n\nNext. Last.\n",
+                "Before.\nAfter.\n\n```py\na.b()\n```\n\nNext.\nLast.\n",
+            ),
+            (
+                "| A | B |\n| - | - |\n| One. Two. | x |\n\nAfter. Next.\n",
+                "| A | B |\n| - | - |\n| One. Two. | x |\n\nAfter.\nNext.\n",
+            ),
+            (
+                "---\ntitle: One. Two.\n---\n\n"
+                "# Heading. Still heading.\n\n"
+                "[ref]: ./a.b\n\nAfter. Next.\n",
+                "---\ntitle: One. Two.\n---\n\n"
+                "# Heading. Still heading.\n\n"
+                "[ref]: ./a.b\n\nAfter.\nNext.\n",
+            ),
+        ]
 
-    def test_preserves_emphasis_at_sentence_start(self) -> None:
-        source = (
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua.\n"
-            "*Ut enim ad minim veniam*, quis nostrud exercitation ullamco laboris "
-            "nisi ut aliquip ex ea commodo consequat.\n"
-        )
-        expected = (
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-            "*Ut enim ad minim veniam*,\n"
-            "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
-    def test_breaks_after_emphasized_sentence(self) -> None:
-        source = (
-            "**Lorem ipsum.** Lorem ipsum dolor sit amet, consectetur adipiscing elit, "
-            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-        )
-        expected = (
-            "**Lorem ipsum.**\n"
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+    def test_maps_sentence_breaks_around_inline_markup(self) -> None:
+        cases = [
+            (
+                "~~Removed sentence.~~ Remaining sentence.\n",
+                "~~Removed sentence.~~\nRemaining sentence.\n",
+            ),
+            (
+                "*One sentence. Two sentence.* Outside sentence.\n",
+                "*One sentence.\nTwo sentence.*\nOutside sentence.\n",
+            ),
+            (
+                "**First sentence.** Remaining sentence.\n",
+                "**First sentence.**\nRemaining sentence.\n",
+            ),
+        ]
 
-    def test_breaks_after_strikethrough_sentence(self) -> None:
-        source = "~~Removed sentence.~~ Remaining sentence.\n"
-        expected = "~~Removed sentence.~~\nRemaining sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
-    def test_breaks_inside_emphasis(self) -> None:
-        source = "*One sentence. Two sentence.* Outside sentence.\n"
-        expected = "*One sentence.\nTwo sentence.*\nOutside sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+    def test_formats_structural_continuation_prefixes(self) -> None:
+        cases = [
+            (
+                "- One sentence. Another sentence.\n",
+                "- One sentence.\n  Another sentence.\n",
+            ),
+            (
+                "- [ ] One sentence. Another sentence.\n",
+                "- [ ] One sentence.\n      Another sentence.\n",
+            ),
+            (
+                "> One sentence. Another sentence.\n",
+                "> One sentence.\n> Another sentence.\n",
+            ),
+            (
+                "> - One. Two.\n>   More.\n\n  - Nested. Item.\n    More.\n\n> > Quote. More.\n",
+                "> - One.\n>   Two.\n>   More.\n\n"
+                "  - Nested.\n    Item.\n    More.\n\n"
+                "> > Quote.\n> > More.\n",
+            ),
+        ]
 
-    def test_passes_projected_text_to_sentence_engine(self) -> None:
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
+
+    def test_preserves_structure_across_long_markdown_blocks(self) -> None:
+        cases = [
+            (
+                "* The parent item establishes context for the remaining steps. "
+                "It records another result for later readers.\n"
+                "  * The child item describes a separate operation. "
+                "It keeps its own continuation text.\n",
+                "* The parent item establishes context for the remaining steps.\n"
+                "  It records another result for later readers.\n"
+                "  * The child item describes a separate operation.\n"
+                "    It keeps its own continuation text.\n",
+            ),
+            (
+                "> * The quoted parent item introduces the procedure. "
+                "It supplies supporting context.\n"
+                ">   * The quoted child item records an independent check. "
+                "It retains both structural prefixes.\n",
+                "> * The quoted parent item introduces the procedure.\n"
+                ">   It supplies supporting context.\n"
+                ">   * The quoted child item records an independent check.\n"
+                ">     It retains both structural prefixes.\n",
+            ),
+            (
+                "* The list item contains two related observations. "
+                "The second observation stays in the item.\n\n"
+                "The following paragraph begins a separate discussion. "
+                "Its continuation has no list prefix.\n",
+                "* The list item contains two related observations.\n"
+                "  The second observation stays in the item.\n\n"
+                "The following paragraph begins a separate discussion.\n"
+                "Its continuation has no list prefix.\n",
+            ),
+            (
+                "The opening sentence establishes the paragraph. "
+                "It prepares the marked statement.\n"
+                "*The marked sentence starts on an authored line.* "
+                "The final sentence remains in the paragraph.\n",
+                "The opening sentence establishes the paragraph.\n"
+                "It prepares the marked statement.\n"
+                "*The marked sentence starts on an authored line.*\n"
+                "The final sentence remains in the paragraph.\n",
+            ),
+        ]
+        options = BreakOptions(mode="sentence")
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, ENGINE, options), expected)
+
+    def test_preserves_uncertain_multiline_inline_source(self) -> None:
+        cases = [
+            "One sentence.  \nAnother sentence.\n",
+            "One sentence.\\\nAnother sentence.\n",
+            "`x\ny`. Next sentence.\n",
+        ]
+
+        for source in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), source)
+
+    def test_passes_projected_text_to_engine(self) -> None:
         engine = RecordingEngine()
         source = "~~Removed sentence.~~ Remaining sentence.\n"
 
@@ -402,166 +341,7 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(engine.seen_text, ["Removed sentence. Remaining sentence."])
 
-    def test_clause_selection_counts_source_markup(self) -> None:
-        source = "**Writers keep context visible; readers understand the result**\n"
-        expected = "**Writers keep context visible;\nreaders understand the result**\n"
-        options = BreakOptions(mode="clause", target_segment_chars=59, min_clause_chars=10)
-
-        self.assertEqual(format_markdown(source, ENGINE, options), expected)
-
-    def test_preserves_collapsed_reference_link_source(self) -> None:
-        source = "Use [v1.2][]. Then continue.\n"
-        expected = "Use [v1.2][].\nThen continue.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_preserves_code_fence_byte_for_byte(self) -> None:
-        source = "Before. After.\n\n```py\na.b()\n```\n\nNext. Last.\n"
-        expected = "Before.\nAfter.\n\n```py\na.b()\n```\n\nNext.\nLast.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_preserves_tables(self) -> None:
-        source = "| A | B |\n| - | - |\n| One. Two. | x |\n\nAfter. Next.\n"
-        expected = "| A | B |\n| - | - |\n| One. Two. | x |\n\nAfter.\nNext.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_preserves_front_matter_heading_and_link_reference(self) -> None:
-        source = (
-            "---\ntitle: One. Two.\n---\n\n"
-            "# Heading. Still heading.\n\n"
-            "[ref]: ./a.b\n\nAfter. Next.\n"
-        )
-        expected = (
-            "---\ntitle: One. Two.\n---\n\n# Heading. Still heading.\n\n"
-            "[ref]: ./a.b\n\nAfter.\nNext.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_list_item_with_continuation_indent(self) -> None:
-        source = "- One sentence. Another sentence.\n"
-        expected = "- One sentence.\n  Another sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_task_list_item_with_marker_preserved(self) -> None:
-        source = "- [ ] One sentence. Another sentence.\n"
-        expected = "- [ ] One sentence.\n      Another sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_nested_prefixes_from_tree_sitter_ranges(self) -> None:
-        source = "> - One. Two.\n>   More.\n\n  - Nested. Item.\n    More.\n\n> > Quote. More.\n"
-        expected = (
-            "> - One.\n"
-            ">   Two.\n"
-            ">   More.\n\n"
-            "  - Nested.\n"
-            "    Item.\n"
-            "    More.\n\n"
-            "> > Quote.\n"
-            "> > More.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_nested_list_without_absorbing_child_item(self) -> None:
-        source = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, "
-            "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. \n"
-            "    * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
-            "dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, "
-            "sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
-        )
-        expected = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-            "  Ut enim ad minim veniam,\n"
-            "  quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
-            "    * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
-            "dolore eu fugiat nulla pariatur.\n"
-            "      Excepteur sint occaecat cupidatat non proident,\n"
-            "      sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_tight_nested_list_item_continuation_indent(self) -> None:
-        source = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
-            "incididunt ut labore et dolore magna aliqua.\n"
-            "  * Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut "
-            "aliquip ex ea commodo consequat.\n"
-            "  * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore "
-            "eu fugiat nulla pariatur.\n"
-        )
-        expected = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-            "  * Ut enim ad minim veniam,\n"
-            "    quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo "
-            "consequat.\n"
-            "  * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
-            "dolore eu fugiat nulla pariatur.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_blockquoted_nested_list_item_continuation_marker(self) -> None:
-        source = (
-            "> * Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
-            "incididunt ut labore et dolore magna aliqua.\n"
-            ">   * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore "
-            "eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt "
-            "in culpa qui officia deserunt mollit anim id est laborum.\n"
-        )
-        expected = (
-            "> * Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            ">   sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-            ">   * Duis aute irure dolor in reprehenderit in voluptate velit esse cillum "
-            "dolore eu fugiat nulla pariatur.\n"
-            ">     Excepteur sint occaecat cupidatat non proident,\n"
-            ">     sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_list_item_before_following_paragraph(self) -> None:
-        source = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
-            "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, "
-            "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
-            "\n"
-            "Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt "
-            "mollit anim id est laborum.\n"
-        )
-        expected = (
-            "* Lorem ipsum dolor sit amet, consectetur adipiscing elit,\n"
-            "  sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n"
-            "  Ut enim ad minim veniam,\n"
-            "  quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n"
-            "\n"
-            "Excepteur sint occaecat cupidatat non proident,\n"
-            "sunt in culpa qui officia deserunt mollit anim id est laborum.\n"
-        )
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_formats_blockquote(self) -> None:
-        source = "> One sentence. Another sentence.\n"
-        expected = "> One sentence.\n> Another sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
-
-    def test_preserves_hard_breaks(self) -> None:
-        source = "One sentence.  \nAnother sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), source)
-
-    def test_preserves_backslash_hard_breaks(self) -> None:
-        source = "One sentence.\\\nAnother sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), source)
-
-    def test_preserves_multiline_inline_code_span(self) -> None:
-        source = "`x\ny`. Next sentence.\n"
-        self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), source)
-
-    def test_text_mode(self) -> None:
-        source = "One sentence. Another sentence.\n\nLast sentence. Done.\n"
-        expected = "One sentence.\nAnother sentence.\n\nLast sentence.\nDone.\n"
-        self.assertEqual(format_text(source, ENGINE, BreakOptions()), expected)
-
-    def test_text_mode_does_not_project_markdown(self) -> None:
+    def test_text_mode_uses_unprojected_paragraphs(self) -> None:
         engine = RecordingEngine()
         source = "One sentence. `Two sentence. Three sentence.` Four sentence.\n"
 
@@ -572,273 +352,143 @@ class SembrrTests(unittest.TestCase):
             ["One sentence. `Two sentence. Three sentence.` Four sentence."],
         )
 
-    def test_text_mode_ignores_markdown_hard_breaks(self) -> None:
+    def test_text_mode_normalizes_markdown_hard_break_syntax(self) -> None:
         source = "One sentence.  \nAnother sentence.\n"
         expected = "One sentence.\nAnother sentence.\n"
 
         self.assertEqual(format_text(source, ENGINE, BreakOptions()), expected)
 
-    def test_clause_mode_selects_optional_breaks(self) -> None:
-        source = (
-            "The formatter keeps Markdown intact; it breaks long prose at semantic boundaries, "
-            "and it avoids changing code spans when those spans appear inline."
-        )
-        expected = (
-            "The formatter keeps Markdown intact;\n"
-            "it breaks long prose at semantic boundaries,\n"
-            "and it avoids changing code spans when those spans appear inline."
-        )
-        options = BreakOptions(mode="clause", target_segment_chars=60, min_clause_chars=20)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_clause_mode_breaks_comma_led_result_clause(self) -> None:
-        source = "The renderer preserves the cached value, so the scheduler evaluates it unchanged."
-        expected = (
-            "The renderer preserves the cached value,\nso the scheduler evaluates it unchanged."
-        )
-        options = BreakOptions(mode="clause", target_segment_chars=60, min_clause_chars=24)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_phrase_mode_adds_phrase_breaks(self) -> None:
-        source = (
-            "Use it when it looks better than other options like colons and parentheses "
-            "or splitting into separate sentences."
-        )
-        expected = (
-            "Use it when it looks better than other options\n"
-            "like colons and parentheses\n"
-            "or splitting into separate sentences."
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_phrase_mode_adds_finite_coordinate_breaks(self) -> None:
-        source = (
-            "The runner keeps the intermediate output stable and every downstream "
-            "check remains green."
-        )
-        expected = (
-            "The runner keeps the intermediate output stable\n"
-            "and every downstream check remains green."
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_phrase_mode_prefers_semicolon_over_later_finite_coordinate(self) -> None:
-        source = (
-            "The runner keeps the intermediate output stable; the scheduler stores "
-            "the result and every downstream check remains green."
-        )
-        semicolon = BreakCandidate(
-            offset=source.index(";") + 1,
-            kind="semicolon",
-            confidence=0.95,
-            reason="test semicolon boundary",
-        )
-        finite_coordinate = BreakCandidate(
-            offset=source.index("and"),
-            kind="finite_coordinate",
-            confidence=0.65,
-            reason="test finite coordinate boundary",
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=100, min_clause_chars=24)
-
-        selected = select_breaks(source, [], [semicolon, finite_coordinate], options)
-
-        self.assertEqual(selected, [semicolon])
-
-    def test_phrase_mode_prefers_finite_coordinate_over_short_parenthetical(self) -> None:
-        source = (
-            "The runner applies the output unchanged and every downstream gate "
-            "(shape, timing) remains green."
-        )
-        finite_coordinate = BreakCandidate(
-            offset=source.index("and"),
-            kind="finite_coordinate",
-            confidence=0.65,
-            reason="test finite coordinate boundary",
-        )
-        parenthetical = BreakCandidate(
-            offset=source.index("("),
-            kind="parenthetical-start",
-            confidence=0.94,
-            reason="test parenthetical boundary",
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=80, min_clause_chars=24)
-
-        selected = select_breaks(source, [], [finite_coordinate, parenthetical], options)
-
-        self.assertEqual(selected, [finite_coordinate])
-
-    def test_phrase_mode_keeps_fitting_parenthetical_before_breaking_after_it(self) -> None:
-        source = (
-            "Run the check on sample values whose methods (`alpha`, `beta`, `.get`, `size`) "
-            "record a path condition, then solve the collected condition."
-        )
-        parenthetical_start = BreakCandidate(
-            offset=source.index("("),
-            kind="parenthetical-start",
-            confidence=0.94,
-            reason="test parenthetical start",
-        )
-        parenthetical_end = BreakCandidate(
-            offset=source.index(")") + 1,
-            kind="parenthetical-end",
-            confidence=0.94,
-            reason="test parenthetical end",
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=90, min_clause_chars=24)
-
-        selected = select_breaks(
+    def test_dependency_cuts_score_every_safe_gap(self) -> None:
+        source = "Alpha beta gamma delta."
+        doc = _fake_tree(
             source,
-            [],
-            [parenthetical_start, parenthetical_end],
-            options,
+            ["Alpha", "beta", "gamma", "delta", "."],
+            [1, 1, 3, 1, 3],
         )
 
-        self.assertEqual(selected, [parenthetical_end])
+        boundaries = spacy_optional_boundaries(source, doc)
 
-    def test_phrase_mode_nests_weaker_breaks_inside_stronger_breaks(self) -> None:
-        source = (
-            "Alpha section introduces a durable premise, continuing with enough detail "
-            "for readers; Beta section extends the concrete result, adding enough detail "
-            "for maintainers."
+        self.assertEqual(
+            [(boundary.offset, boundary.penalty) for boundary in boundaries],
+            [
+                (source.index(" "), 1),
+                (source.index(" ", 6), 0.25),
+                (source.rindex(" "), 1.25),
+            ],
         )
-        left_phrase = BreakCandidate(
-            offset=source.index("continuing"),
-            kind="participial_phrase",
-            confidence=0.45,
-            reason="test left phrase boundary",
+
+    def test_punctuation_and_wrappers_do_not_change_boundary_eligibility(self) -> None:
+        source = "(Alpha beta — gamma delta.)"
+        doc = _fake_tree(
+            source,
+            ["(", "Alpha", "beta", "—", "gamma", "delta", ".", ")"],
+            [2, 2, 2, 2, 5, 2, 5, 2],
         )
-        semicolon = BreakCandidate(
-            offset=source.index(";") + 1,
-            kind="semicolon",
-            confidence=0.95,
-            reason="test semicolon boundary",
+
+        boundaries = spacy_optional_boundaries(source, doc)
+
+        self.assertEqual(
+            [boundary.offset for boundary in boundaries],
+            [index for index, char in enumerate(source) if char == " "],
         )
-        right_phrase = BreakCandidate(
-            offset=source.index("adding"),
-            kind="participial_phrase",
-            confidence=0.45,
-            reason="test right phrase boundary",
+
+    def test_short_dependencies_make_a_break_expensive(self) -> None:
+        source = "Alpha and beta arrives."
+        doc = _fake_tree(
+            source,
+            ["Alpha", "and", "beta", "arrives", "."],
+            [3, 2, 0, 3, 3],
         )
-        options = BreakOptions(mode="phrase", target_segment_chars=58, min_clause_chars=20)
 
-        selected = select_breaks(source, [], [left_phrase, semicolon, right_phrase], options)
+        boundaries = spacy_optional_boundaries(source, doc)
 
-        self.assertEqual(selected, [left_phrase, semicolon, right_phrase])
+        self.assertGreater(boundaries[1].penalty, boundaries[0].penalty)
 
-    def test_phrase_mode_formats_markdown(self) -> None:
-        source = (
-            "**Use it** when it looks better than other options like colons and parentheses "
-            "or splitting into separate sentences.\n"
+    def test_function_words_are_expensive_line_endings(self) -> None:
+        source = "Alpha and beta arrives."
+        doc = _fake_tree(
+            source,
+            ["Alpha", "and", "beta", "arrives", "."],
+            [0, 0, 3, 0, 3],
+            ["NOUN", "CCONJ", "NOUN", "VERB", "PUNCT"],
         )
-        expected = (
-            "**Use it** when it looks better than other options\n"
-            "like colons and parentheses\n"
-            "or splitting into separate sentences.\n"
+
+        boundaries = spacy_optional_boundaries(source, doc)
+
+        self.assertGreaterEqual(boundaries[1].penalty, 1)
+
+    def test_semantic_selection_prefers_stronger_syntax(self) -> None:
+        source = f"{'a' * 35} {'b' * 35} {'c' * 35}"
+        weak = BreakBoundary(offset=35, penalty=1)
+        strong = BreakBoundary(offset=71, penalty=0.1)
+        options = BreakOptions(target_segment_chars=80)
+
+        self.assertEqual(select_breaks(source, [weak, strong], options), [strong])
+
+    def test_content_extents_preserve_trimmed_segment_lengths(self) -> None:
+        source = "  alpha \t beta\n\n gamma  "
+        offsets = list(range(len(source) + 1))
+        content_starts, content_ends = _content_extents(source, offsets)
+
+        for left in range(len(offsets)):
+            for right in range(left + 1, len(offsets)):
+                expected = len(source[offsets[left] : offsets[right]].strip())
+                actual = max(0, content_ends[right] - content_starts[left])
+                self.assertEqual(actual, expected)
+
+    def test_global_selection_avoids_extra_strong_breaks(self) -> None:
+        source = " ".join(part * 45 for part in "abcd")
+        first = BreakBoundary(offset=45, penalty=0.1)
+        middle = BreakBoundary(offset=91, penalty=0.2)
+        last = BreakBoundary(offset=137, penalty=0.1)
+        options = BreakOptions(target_segment_chars=100)
+
+        self.assertEqual(
+            select_breaks(source, [first, middle, last], options),
+            [middle],
         )
-        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
 
-        self.assertEqual(format_markdown(source, ENGINE, options), expected)
+    def test_short_segment_length_is_a_soft_cost(self) -> None:
+        source = f"{'a' * 20} {'b' * 90}"
+        boundary = BreakBoundary(offset=20, penalty=0)
+        options = BreakOptions(target_segment_chars=100, min_segment_chars=24)
 
-    def test_phrase_mode_formats_markdown_nominal_coordinate(self) -> None:
-        source = (
-            "It is the design rationale behind [`aaa/bbb/example.py`](../bbb/example.py) "
-            "and the static-analysis surface in [`architecture.md` section](architecture.md).\n"
+        self.assertEqual(select_breaks(source, [boundary], options), [boundary])
+
+    def test_semantic_mode_can_leave_a_small_overflow(self) -> None:
+        source = f"{'a' * 50} {'b' * 51}"
+        boundary = BreakBoundary(offset=50, penalty=1)
+        options = BreakOptions(target_segment_chars=100)
+
+        self.assertEqual(select_breaks(source, [boundary], options), [])
+
+    def test_strict_mode_uses_a_weak_boundary_for_overflow(self) -> None:
+        source = f"{'a' * 50} {'b' * 51}"
+        boundary = BreakBoundary(offset=50, penalty=1)
+        options = BreakOptions(mode="strict", target_segment_chars=100)
+
+        self.assertEqual(select_breaks(source, [boundary], options), [boundary])
+
+    def test_sentence_mode_ignores_optional_boundaries(self) -> None:
+        source = "First sentence. Second sentence."
+        mandatory = BreakBoundary(
+            offset=source.index(" ", source.index(".")),
+            penalty=0,
+            mandatory=True,
         )
-        expected = (
-            "It is the design rationale behind [`aaa/bbb/example.py`](../bbb/example.py)\n"
-            "and the static-analysis surface in [`architecture.md` section](architecture.md).\n"
+        optional = BreakBoundary(offset=source.index(" "), penalty=0)
+
+        self.assertEqual(
+            select_breaks(source, [optional, mandatory], BreakOptions(mode="sentence")),
+            [mandatory],
         )
-        options = BreakOptions(mode="phrase", target_segment_chars=100, min_clause_chars=24)
 
-        self.assertEqual(format_markdown(source, ENGINE, options), expected)
+    def test_selection_uses_printed_source_length(self) -> None:
+        source = "**Writers keep context visible; readers understand the result**"
+        boundary = BreakBoundary(offset=source.index(";") + 1, penalty=0)
+        options = BreakOptions(target_segment_chars=59, min_segment_chars=10)
 
-    def test_phrase_mode_uses_weak_nonfinite_phrase_breaks_last(self) -> None:
-        source = (
-            "The formatter projects Markdown source to preserve protected spans and map "
-            "offsets back."
-        )
-        expected = (
-            "The formatter projects Markdown source\n"
-            "to preserve protected spans and map offsets back."
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=60, min_clause_chars=24)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_phrase_mode_uses_comma_break_as_last_resort(self) -> None:
-        source = (
-            "The formatter keeps the prose readable, even when stronger phrase candidates "
-            "are absent from the sentence."
-        )
-        expected = (
-            "The formatter keeps the prose readable,\n"
-            "even when stronger phrase candidates are absent from the sentence."
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=70, min_clause_chars=24)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_phrase_mode_rejects_short_comma_breaks(self) -> None:
-        source = (
-            "Short start, then the formatter keeps adding more words until the line is "
-            "too long for the target."
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=30)
-
-        self.assertEqual(format_prose(source, ENGINE, options), source)
-
-    def test_phrase_mode_prefers_nonfinite_phrase_over_comma_break(self) -> None:
-        source = (
-            "The formatter keeps a stable projection, while using parser output to preserve "
-            "source offsets."
-        )
-        comma = BreakCandidate(
-            offset=source.index(",") + 1,
-            kind="comma_phrase",
-            confidence=0.35,
-            reason="test comma phrase boundary",
-        )
-        nonfinite = BreakCandidate(
-            offset=source.index("using"),
-            kind="participial_phrase",
-            confidence=0.45,
-            reason="test participial phrase boundary",
-        )
-        options = BreakOptions(mode="phrase", target_segment_chars=70, min_clause_chars=24)
-
-        selected = select_breaks(source, [], [comma, nonfinite], options)
-
-        self.assertEqual(selected, [nonfinite])
-
-    def test_strict_mode_enforces_target_at_word_boundaries(self) -> None:
-        source = "Alpha beta gamma delta epsilon zeta eta."
-        expected = "Alpha beta gamma\ndelta epsilon\nzeta eta."
-        options = BreakOptions(mode="strict", target_segment_chars=16)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
-
-    def test_strict_mode_uses_short_comma_break_before_word_boundary(self) -> None:
-        source = (
-            "Short start, then the formatter keeps adding more words until the line is "
-            "too long for the target."
-        )
-        expected = (
-            "Short start,\n"
-            "then the formatter keeps\n"
-            "adding more words until the\n"
-            "line is too long for the\n"
-            "target."
-        )
-        options = BreakOptions(mode="strict", target_segment_chars=30)
-
-        self.assertEqual(format_prose(source, ENGINE, options), expected)
+        self.assertEqual(select_breaks(source, [boundary], options), [boundary])
 
     def test_strict_mode_preserves_oversized_markdown_atom(self) -> None:
         source = (
@@ -854,528 +504,184 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(format_markdown(source, ENGINE, options), expected)
 
-    def test_clause_mode_discovers_spacy_subordinate_boundary(self) -> None:
-        source = (
-            "The writer keeps context visible "
-            "because the formatter uses dependency labels carefully."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("writer", "NOUN", "nsubj", "NN"),
-                ("keeps", "VERB", "ROOT", "VBZ"),
-                ("context", "NOUN", "dobj", "NN"),
-                ("visible", "ADJ", "acomp", "JJ"),
-                ("because", "SCONJ", "mark", "IN"),
-                ("the", "DET", "det", "DT"),
-                ("formatter", "NOUN", "nsubj", "NN"),
-                ("uses", "VERB", "advcl", "VBZ"),
-                ("dependency", "NOUN", "compound", "NN"),
-                ("labels", "NOUN", "dobj", "NNS"),
-                ("carefully", "ADV", "advmod", "RB"),
-                (".", "PUNCT", "punct", "."),
-            ],
+    def test_strict_mode_counts_structural_prefix_in_target(self) -> None:
+        source = "1. The snapshot includes stable identifiers, timestamps, and source links.\n"
+        options = BreakOptions(
+            mode="strict",
+            target_segment_chars=72,
+            min_segment_chars=18,
         )
 
-        candidates = _spacy_clause_candidates(source, tokens)
-        self.assertIn(("subordinate", source.index("because")), _candidate_summary(candidates))
+        result = format_markdown(source, ENGINE, options)
 
-    def test_clause_mode_discovers_spacy_coordinate_boundary(self) -> None:
-        source = (
-            "The writer keeps context visible, and the formatter uses dependency labels carefully."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("writer", "NOUN", "nsubj", "NN"),
-                ("keeps", "VERB", "ROOT", "VBZ"),
-                ("context", "NOUN", "dobj", "NN"),
-                ("visible", "ADJ", "acomp", "JJ"),
-                (",", "PUNCT", "punct", ","),
-                ("and", "CCONJ", "cc", "CC"),
-                ("the", "DET", "det", "DT"),
-                ("formatter", "NOUN", "nsubj", "NN"),
-                ("uses", "VERB", "conj", "VBZ"),
-                ("dependency", "NOUN", "compound", "NN"),
-                ("labels", "NOUN", "dobj", "NNS"),
-                ("carefully", "ADV", "advmod", "RB"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-        self.assertIn(("coordinate", source.index("and")), _candidate_summary(candidates))
-
-    def test_clause_mode_discovers_spacy_comma_clause_boundary(self) -> None:
-        source = "The formatter preserves the cache, so the runner evaluates the result later."
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("formatter", "NOUN", "nsubj", "NN"),
-                ("preserves", "VERB", "ROOT", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("cache", "NOUN", "dobj", "NN"),
-                (",", "PUNCT", "punct", ","),
-                ("so", "ADV", "advmod", "RB"),
-                ("the", "DET", "det", "DT"),
-                ("runner", "NOUN", "nsubj", "NN"),
-                ("evaluates", "VERB", "conj", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("result", "NOUN", "dobj", "NN"),
-                ("later", "ADV", "advmod", "RB"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-
-        self.assertIn(("comma_clause", source.index("so")), _candidate_summary(candidates))
-
-    def test_clause_mode_discovers_nonlexical_comma_clause_boundary(self) -> None:
-        source = "The guide explains the process, how the writer keeps readers oriented."
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("guide", "NOUN", "nsubj", "NN"),
-                ("explains", "VERB", "ROOT", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("process", "NOUN", "dobj", "NN"),
-                (",", "PUNCT", "punct", ","),
-                ("how", "SCONJ", "advmod", "WRB"),
-                ("the", "DET", "det", "DT"),
-                ("writer", "NOUN", "nsubj", "NN"),
-                ("keeps", "VERB", "ccomp", "VBZ"),
-                ("readers", "NOUN", "dobj", "NNS"),
-                ("oriented", "ADJ", "acomp", "JJ"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-
-        self.assertIn(("comma_clause", source.index("how")), _candidate_summary(candidates))
-
-    def test_clause_mode_ignores_comma_led_noun_phrase_tail(self) -> None:
-        source = "The guide explains the process, and the concrete check it unlocks."
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("guide", "NOUN", "nsubj", "NN"),
-                ("explains", "VERB", "ROOT", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("process", "NOUN", "dobj", "NN"),
-                (",", "PUNCT", "punct", ","),
-                ("and", "CCONJ", "cc", "CC"),
-                ("the", "DET", "det", "DT"),
-                ("concrete", "ADJ", "amod", "JJ"),
-                ("check", "NOUN", "conj", "NN"),
-                ("it", "PRON", "nsubj", "PRP"),
-                ("unlocks", "VERB", "relcl", "VBZ"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertNotIn(("comma_clause", source.index("and")), summary)
-        self.assertNotIn(("coordinate", source.index("and")), summary)
-
-    def test_clause_mode_prefers_parenthetical_boundaries(self) -> None:
-        source = (
-            "Authors ship a summary (builders create a plan: runners check it) "
-            "before readers use it."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("Authors", "NOUN", "nsubj", "NNS"),
-                ("ship", "VERB", "ROOT", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("summary", "NOUN", "dobj", "NN"),
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("builders", "NOUN", "nsubj", "NNS"),
-                ("create", "VERB", "relcl", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("plan", "NOUN", "dobj", "NN"),
-                (":", "PUNCT", "punct", ":"),
-                ("runners", "NOUN", "nsubj", "NNS"),
-                ("check", "VERB", "conj", "VBP"),
-                ("it", "PRON", "dobj", "PRP"),
-                (")", "PUNCT", "punct", "-RRB-"),
-                ("before", "SCONJ", "mark", "IN"),
-                ("readers", "NOUN", "nsubj", "NNS"),
-                ("use", "VERB", "advcl", "VBP"),
-                ("it", "PRON", "dobj", "PRP"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertIn(("parenthetical-start", source.index("(")), summary)
-        self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
-        self.assertNotIn(("colon", source.index(":") + 1), summary)
-
-    def test_clause_mode_discovers_semicolon_inside_parenthetical(self) -> None:
-        source = (
-            "Authors ship a summary (builders create a plan; runners check it) "
-            "before readers use it."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("Authors", "NOUN", "nsubj", "NNS"),
-                ("ship", "VERB", "ROOT", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("summary", "NOUN", "dobj", "NN"),
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("builders", "NOUN", "nsubj", "NNS"),
-                ("create", "VERB", "relcl", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("plan", "NOUN", "dobj", "NN"),
-                (";", "PUNCT", "punct", ":"),
-                ("runners", "NOUN", "nsubj", "NNS"),
-                ("check", "VERB", "conj", "VBP"),
-                ("it", "PRON", "dobj", "PRP"),
-                (")", "PUNCT", "punct", "-RRB-"),
-                ("before", "SCONJ", "mark", "IN"),
-                ("readers", "NOUN", "nsubj", "NNS"),
-                ("use", "VERB", "advcl", "VBP"),
-                ("it", "PRON", "dobj", "PRP"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertIn(("parenthetical-start", source.index("(")), summary)
-        self.assertIn(("semicolon", source.index(";") + 1), summary)
-        self.assertIn(("parenthetical-end", source.index(")") + 1), summary)
-
-    def test_clause_mode_keeps_trailing_punctuation_with_parenthetical(self) -> None:
-        source = (
-            "Workers keep the local summary (three fields), "
-            "while reviewers inspect the final report."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("Workers", "NOUN", "nsubj", "NNS"),
-                ("keep", "VERB", "ROOT", "VBP"),
-                ("the", "DET", "det", "DT"),
-                ("local", "ADJ", "amod", "JJ"),
-                ("summary", "NOUN", "dobj", "NN"),
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("three", "NUM", "nummod", "CD"),
-                ("fields", "NOUN", "appos", "NNS"),
-                (")", "PUNCT", "punct", "-RRB-"),
-                (",", "PUNCT", "punct", ","),
-                ("while", "SCONJ", "mark", "IN"),
-                ("reviewers", "NOUN", "nsubj", "NNS"),
-                ("inspect", "VERB", "advcl", "VBP"),
-                ("the", "DET", "det", "DT"),
-                ("final", "ADJ", "amod", "JJ"),
-                ("report", "NOUN", "dobj", "NN"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-
-        self.assertIn(
-            ("parenthetical-end", source.index(",") + 1),
-            _candidate_summary(candidates),
-        )
-
-    def test_clause_mode_analyzes_inside_paragraph_wrapper(self) -> None:
-        source = (
-            "(Workers publish a summary; reviewers inspect logs — one trace, "
-            "another counter — but operators archive the result.)"
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("Workers", "NOUN", "nsubj", "NNS"),
-                ("publish", "VERB", "ROOT", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("summary", "NOUN", "dobj", "NN"),
-                (";", "PUNCT", "punct", ":"),
-                ("reviewers", "NOUN", "nsubj", "NNS"),
-                ("inspect", "VERB", "conj", "VBP"),
-                ("logs", "NOUN", "dobj", "NNS"),
-                ("—", "PUNCT", "punct", ":"),
-                ("one", "NUM", "nummod", "CD"),
-                ("trace", "NOUN", "appos", "NN"),
-                (",", "PUNCT", "punct", ","),
-                ("another", "DET", "det", "DT"),
-                ("counter", "NOUN", "conj", "NN"),
-                ("—", "PUNCT", "punct", ":"),
-                ("but", "CCONJ", "cc", "CC"),
-                ("operators", "NOUN", "nsubj", "NNS"),
-                ("archive", "VERB", "conj", "VBP"),
-                ("the", "DET", "det", "DT"),
-                ("result", "NOUN", "dobj", "NN"),
-                (".", "PUNCT", "punct", "."),
-                (")", "PUNCT", "punct", "-RRB-"),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertEqual(
-            [offset for kind, offset in summary if kind == "dash"],
-            [source.index("—") + 1, source.rindex("—") + 1],
-        )
-        self.assertFalse(
-            {"parenthetical-start", "parenthetical-end"} & {kind for kind, _ in summary}
-        )
-
-    def test_clause_mode_ignores_unmatched_parenthesis_for_depth(self) -> None:
-        source = "Authors ship a draft (temporary note; readers review the result."
-        tokens = _fake_doc(
-            source,
-            [
-                ("Authors", "NOUN", "nsubj", "NNS"),
-                ("ship", "VERB", "ROOT", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("draft", "NOUN", "dobj", "NN"),
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("temporary", "ADJ", "amod", "JJ"),
-                ("note", "NOUN", "dobj", "NN"),
-                (";", "PUNCT", "punct", ":"),
-                ("readers", "NOUN", "nsubj", "NNS"),
-                ("review", "VERB", "conj", "VBP"),
-                ("the", "DET", "det", "DT"),
-                ("result", "NOUN", "dobj", "NN"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_clause_candidates(source, tokens)
-
-        self.assertIn(("semicolon", source.index(";") + 1), _candidate_summary(candidates))
-
-    def test_phrase_mode_discovers_spacy_phrase_boundaries(self) -> None:
-        source = (
-            "Use it when it looks better than other options like colons and parentheses "
-            "or splitting into separate sentences."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("Use", "VERB", "ROOT", "VB"),
-                ("it", "PRON", "dobj", "PRP"),
-                ("when", "SCONJ", "advmod", "WRB"),
-                ("it", "PRON", "nsubj", "PRP"),
-                ("looks", "VERB", "advcl", "VBZ"),
-                ("better", "ADJ", "acomp", "JJR"),
-                ("than", "ADP", "prep", "IN"),
-                ("other", "ADJ", "amod", "JJ"),
-                ("options", "NOUN", "pobj", "NNS"),
-                ("like", "ADP", "prep", "IN"),
-                ("colons", "NOUN", "pobj", "NNS"),
-                ("and", "CCONJ", "cc", "CC"),
-                ("parentheses", "NOUN", "conj", "NNS"),
-                ("or", "CCONJ", "cc", "CC"),
-                ("splitting", "VERB", "conj", "VBG"),
-                ("into", "ADP", "prep", "IN"),
-                ("separate", "ADJ", "amod", "JJ"),
-                ("sentences", "NOUN", "pobj", "NNS"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_phrase_candidates(source, tokens)
-        self.assertIn(("example_phrase", source.index("like")), _candidate_summary(candidates))
-        self.assertIn(
-            ("gerund_coordinate", source.index("or")),
-            _candidate_summary(candidates),
-        )
-
-    def test_phrase_mode_discovers_spacy_finite_coordinate_boundary(self) -> None:
-        source = (
-            "The runner keeps the intermediate output stable and every downstream "
-            "check remains green."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("runner", "NOUN", "nsubj", "NN"),
-                ("keeps", "VERB", "ROOT", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("intermediate", "ADJ", "amod", "JJ"),
-                ("output", "NOUN", "dobj", "NN"),
-                ("stable", "ADJ", "acomp", "JJ"),
-                ("and", "CCONJ", "cc", "CC"),
-                ("every", "DET", "det", "DT"),
-                ("downstream", "ADJ", "amod", "JJ"),
-                ("check", "NOUN", "nsubj", "NN"),
-                ("remains", "VERB", "conj", "VBZ"),
-                ("green", "ADJ", "acomp", "JJ"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_phrase_candidates(source, tokens)
-
-        self.assertIn(
-            ("finite_coordinate", source.index("and")),
-            _candidate_summary(candidates),
-        )
-
-    def test_phrase_mode_discovers_spacy_nominal_coordinate_boundary(self) -> None:
-        source = (
-            "It is the design rationale behind a reference link and the static-analysis "
-            "surface in a design note."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("It", "PRON", "nsubj", "PRP"),
-                ("is", "AUX", "ROOT", "VBZ"),
-                ("the", "DET", "det", "DT"),
-                ("design", "NOUN", "compound", "NN"),
-                ("rationale", "NOUN", "attr", "NN"),
-                ("behind", "ADP", "prep", "IN"),
-                ("a", "DET", "det", "DT"),
-                ("reference", "NOUN", "compound", "NN"),
-                ("link", "NOUN", "pobj", "NN"),
-                ("and", "CCONJ", "cc", "CC"),
-                ("the", "DET", "det", "DT"),
-                ("static", "NOUN", "compound", "NN"),
-                ("-", "PUNCT", "punct", "HYPH"),
-                ("analysis", "NOUN", "compound", "NN"),
-                ("surface", "NOUN", "conj", "NN"),
-                ("in", "ADP", "prep", "IN"),
-                ("a", "DET", "det", "DT"),
-                ("design", "NOUN", "compound", "NN"),
-                ("note", "NOUN", "pobj", "NN"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_phrase_candidates(source, tokens)
-
-        self.assertIn(
-            ("nominal_coordinate", source.index("and")),
-            _candidate_summary(candidates),
-        )
-
-    def test_phrase_mode_discovers_spacy_lowest_priority_phrase_boundaries(self) -> None:
-        source = (
-            "The formatter projects Markdown source, to preserve protected spans using "
-            "parser output."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("The", "DET", "det", "DT"),
-                ("formatter", "NOUN", "nsubj", "NN"),
-                ("projects", "VERB", "ROOT", "VBZ"),
-                ("Markdown", "PROPN", "compound", "NNP"),
-                ("source", "NOUN", "dobj", "NN"),
-                (",", "PUNCT", "punct", ","),
-                ("to", "PART", "aux", "TO"),
-                ("preserve", "VERB", "acl", "VB"),
-                ("protected", "VERB", "amod", "VBN"),
-                ("spans", "NOUN", "dobj", "NNS"),
-                ("using", "VERB", "xcomp", "VBG"),
-                ("parser", "NOUN", "compound", "NN"),
-                ("output", "NOUN", "dobj", "NN"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_phrase_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertIn(("infinitive_phrase", source.index("to")), summary)
-        self.assertIn(("participial_phrase", source.index("using")), summary)
-        self.assertIn(("comma_phrase", source.index(",") + 1), summary)
-
-    def test_phrase_mode_avoids_parenthetical_phrase_boundaries(self) -> None:
-        source = (
-            "Authors keep a guide (including tricky examples, or splitting extra cases) "
-            "before readers use it."
-        )
-        tokens = _fake_doc(
-            source,
-            [
-                ("Authors", "NOUN", "nsubj", "NNS"),
-                ("keep", "VERB", "ROOT", "VBP"),
-                ("a", "DET", "det", "DT"),
-                ("guide", "NOUN", "dobj", "NN"),
-                ("(", "PUNCT", "punct", "-LRB-"),
-                ("including", "ADP", "prep", "VBG"),
-                ("tricky", "ADJ", "amod", "JJ"),
-                ("examples", "NOUN", "pobj", "NNS"),
-                (",", "PUNCT", "punct", ","),
-                ("or", "CCONJ", "cc", "CC"),
-                ("splitting", "VERB", "conj", "VBG"),
-                ("extra", "ADJ", "amod", "JJ"),
-                ("cases", "NOUN", "dobj", "NNS"),
-                (")", "PUNCT", "punct", "-RRB-"),
-                ("before", "SCONJ", "mark", "IN"),
-                ("readers", "NOUN", "nsubj", "NNS"),
-                ("use", "VERB", "advcl", "VBP"),
-                ("it", "PRON", "dobj", "PRP"),
-                (".", "PUNCT", "punct", "."),
-            ],
-        )
-
-        candidates = _spacy_phrase_candidates(source, tokens)
-        summary = _candidate_summary(candidates)
-
-        self.assertNotIn(("example_phrase", source.index("including")), summary)
-        self.assertNotIn(("gerund_coordinate", source.index("or")), summary)
-        self.assertNotIn(("comma_phrase", source.index(",") + 1), summary)
+        self.assertTrue(all(len(line) <= 72 for line in result.splitlines()))
 
     def test_preserves_tree_sitter_inline_spans(self) -> None:
         source = "Use `경로/a.b.py`. Visit <https://x.y/z>. Then see http://x.y/z.\n"
         expected = "Use `경로/a.b.py`.\nVisit <https://x.y/z>.\nThen see http://x.y/z.\n"
+
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
     def test_bare_url_does_not_swallow_sentence_punctuation(self) -> None:
         source = "See http://x.y/z. Next sentence.\n"
         expected = "See http://x.y/z.\nNext sentence.\n"
+
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
     def test_placeholder_text_in_source_is_not_replaced(self) -> None:
-        source = "Keep SEMBRRATOM0_0_ literal. Then use `src/a.b.py`.\n"
-        expected = "Keep SEMBRRATOM0_0_ literal.\nThen use `src/a.b.py`.\n"
+        source = "Keep SEMBRRATOM0X0X literal. Then use `src/a.b.py`.\n"
+        expected = "Keep SEMBRRATOM0X0X literal.\nThen use `src/a.b.py`.\n"
+
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
     def test_idempotent(self) -> None:
         source = "- One sentence. Another sentence.\n\nUse `src/a.b.py`. Next sentence.\n"
         first = format_markdown(source, ENGINE, BreakOptions())
         second = format_markdown(first, ENGINE, BreakOptions())
+
         self.assertEqual(first, second)
 
+    def test_task_list_continuation_is_idempotent(self) -> None:
+        source = "- [ ] Confirm the selected destination. Keep the review record.\n"
+        expected = "- [ ] Confirm the selected destination.\n      Keep the review record.\n"
+        options = BreakOptions(mode="sentence")
 
-def _fake_doc(source: str, specs: list[tuple[str, str, str, str]]) -> list[FakeToken]:
+        first = format_markdown(source, ENGINE, options)
+        second = format_markdown(first, ENGINE, options)
+
+        self.assertEqual(first, expected)
+        self.assertEqual(second, first)
+
+
+class RealEngineEndToEndTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.engine = SentenceEngine()
+
+    def test_semantic_mode_uses_scored_boundaries(self) -> None:
+        source = (
+            "The formatter preserves the original source; the analyzer scores each boundary, "
+            "and the layout chooses a coherent result.\n"
+        )
+        expected = (
+            "The formatter preserves the original source;\n"
+            "the analyzer scores each boundary,\n"
+            "and the layout chooses a coherent result.\n"
+        )
+        options = BreakOptions(target_segment_chars=62, min_segment_chars=20)
+
+        self.assertEqual(format_markdown(source, self.engine, options), expected)
+
+    def test_strict_markdown_formatting_preserves_an_atom(self) -> None:
+        source = (
+            "Review [`render_page()`](api.md) before the integration runner processes "
+            "the remaining configuration values.\n"
+        )
+        expected = (
+            "Review [`render_page()`](api.md)\n"
+            "before the integration\n"
+            "runner processes\n"
+            "the remaining configuration values.\n"
+        )
+        options = BreakOptions(
+            mode="strict",
+            target_segment_chars=36,
+            min_segment_chars=12,
+        )
+
+        self.assertEqual(format_markdown(source, self.engine, options), expected)
+
+    def test_semantic_mode_preserves_local_attachments(self) -> None:
+        cases = [
+            (
+                "The report command reads a project manifest, validates the selected profile, "
+                "and writes a deterministic summary for reviewers.\n",
+                "The report command reads a project manifest,\n"
+                "validates the selected profile,\n"
+                "and writes a deterministic summary for reviewers.\n",
+            ),
+            (
+                "The preview records every selected input, and the final pass reuses that "
+                "snapshot so reviewers can compare the two operations.\n",
+                "The preview records every selected input,\n"
+                "and the final pass reuses that snapshot\n"
+                "so reviewers can compare the two operations.\n",
+            ),
+            (
+                "The final status may be **ready** (all required checks passed), "
+                "**blocked** (a required input is missing), or **degraded** "
+                "(publication succeeded with a recoverable warning); each state has a "
+                "distinct follow-up action for the operator.\n",
+                "The final status may be **ready** (all required checks passed),\n"
+                "**blocked** (a required input is missing),\n"
+                "or **degraded** (publication succeeded with a recoverable warning);\n"
+                "each state has a distinct follow-up action for the operator.\n",
+            ),
+        ]
+        options = BreakOptions(target_segment_chars=72, min_segment_chars=18)
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(format_markdown(source, self.engine, options), expected)
+
+    def test_semantic_mode_avoids_an_optional_overflow(self) -> None:
+        source = (
+            "Use [`ReportRunner.execute()`](reference/runner.md#execute) with `--dry-run` "
+            "before publishing; the preview records every selected input, and the final pass "
+            "reuses that snapshot so reviewers can compare the two operations.\n"
+        )
+        options = BreakOptions(target_segment_chars=72, min_segment_chars=18)
+
+        result = format_markdown(source, self.engine, options)
+
+        self.assertTrue(all(len(line) <= 72 for line in result.splitlines()))
+
+
+def _sentence_boundaries(text: str) -> list[BreakBoundary]:
+    boundaries: list[BreakBoundary] = []
+    index = 0
+
+    while index < len(text):
+        if text[index] not in ".!?":
+            index += 1
+            continue
+
+        offset = _after_closing_punctuation(text, index + 1)
+        if offset < len(text) and text[offset].isspace():
+            boundaries.append(BreakBoundary(offset=offset, penalty=0, mandatory=True))
+        index = offset + 1
+
+    return boundaries
+
+
+def _whitespace_boundaries(text: str) -> list[BreakBoundary]:
+    return [
+        BreakBoundary(offset=index, penalty=1)
+        for index, char in enumerate(text)
+        if char.isspace() and 0 < index < len(text) - 1
+    ]
+
+
+def _fake_tree(
+    source: str,
+    words: list[str],
+    heads: list[int],
+    parts_of_speech: list[str] | None = None,
+) -> FakeDoc:
     tokens: list[FakeToken] = []
     cursor = 0
-    for text, pos, dep, tag in specs:
-        idx = source.index(text, cursor)
-        token = FakeToken(text=text, idx=idx, pos=pos, dep=dep, tag=tag)
-        tokens.append(token)
-        cursor = idx + len(text)
-    return tokens
+    if parts_of_speech is None:
+        parts_of_speech = ["NOUN"] * len(words)
 
+    for index, (word, pos) in enumerate(zip(words, parts_of_speech, strict=True)):
+        offset = source.index(word, cursor)
+        tokens.append(FakeToken(word, offset, index, pos))
+        cursor = offset + len(word)
 
-def _candidate_summary(candidates):
-    return [(candidate.kind, candidate.offset) for candidate in candidates]
+    for token, head in zip(tokens, heads, strict=True):
+        token.head = tokens[head]
+
+    return FakeDoc(tokens)
 
 
 def _after_closing_punctuation(text: str, offset: int) -> int:
