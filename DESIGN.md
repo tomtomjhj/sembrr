@@ -129,6 +129,10 @@ The cost of each segment combines:
 - a fixed break cost;
 - the dependency-cut penalty.
 
+Semantic mode sums these costs directly.
+Strict mode compares paths first by total squared overflow,
+then by the remaining layout cost.
+
 Final underfill receives a larger cost
 to avoid stranding a short sentence tail.
 The minimum segment length is soft,
@@ -137,7 +141,7 @@ so a strong boundary can produce a short but coherent segment.
 Semantic mode gives overflow a normal squared cost.
 It can leave a slightly over-target segment intact
 when every available boundary is weak.
-Strict mode multiplies overflow cost by a large factor.
+Strict mode selects a zero-overflow path whenever one exists.
 An indivisible Markdown atom can still exceed the target.
 
 The optimizer uses printed source lengths.
@@ -153,7 +157,7 @@ Typical use remains dominated by spaCy startup and parsing.
 
 - `sentence` emits only sentence boundaries.
 - `semantic` uses syntax scores and soft length costs.
-- `strict` strongly penalizes every avoidable over-target segment.
+- `strict` enforces the target whenever safe boundaries permit.
 
 ## Defaults
 

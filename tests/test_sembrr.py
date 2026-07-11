@@ -495,6 +495,17 @@ class SembrrTests(unittest.TestCase):
 
         self.assertEqual(select_breaks(source, [boundary], options), [boundary])
 
+    def test_strict_mode_enforces_target_before_minimum(self) -> None:
+        source = f"{'a' * 50} {'b' * 50}"
+        boundary = BreakBoundary(offset=50, penalty=0)
+        options = BreakOptions(
+            mode="strict",
+            target_segment_chars=100,
+            min_segment_chars=100,
+        )
+
+        self.assertEqual(select_breaks(source, [boundary], options), [boundary])
+
     def test_sentence_mode_ignores_optional_boundaries(self) -> None:
         source = "First sentence. Second sentence."
         mandatory = BreakBoundary(

@@ -13,7 +13,6 @@ FILL_COST = 5.0
 FINAL_FILL_COST = 10.0
 SHORTFALL_COST = 2.0
 SEMANTIC_OVERFLOW_COST = 2.0
-STRICT_OVERFLOW_COST = 1000.0
 
 
 def select_breaks(
@@ -75,14 +74,15 @@ def _optimal_breaks(
         *boundaries,
         BreakBoundary(end, penalty=0),
     ]
-    costs = [inf] * len(points)
+    costs = [(inf, inf)] * len(points)
     previous: list[int | None] = [None] * len(points)
-    costs[0] = 0.0
+    costs[0] = (0.0, 0.0)
     content_starts, content_ends = _content_extents(
         text,
         [point.offset for point in points],
     )
 
+    # Path costs compare strict overflow before the remaining layout cost.
     # For each endpoint, keep the cheapest complete path from the segment start:
     # costs[right] = min(costs[left] + segment_cost(left, right)) for left < right.
     for right in range(1, len(points)):
@@ -94,7 +94,10 @@ def _optimal_breaks(
                 final=right == len(points) - 1,
                 options=options,
             )
-            total = costs[left] + edge_cost
+            total = (
+                costs[left][0] + edge_cost[0],
+                costs[left][1] + edge_cost[1],
+            )
             if total < costs[right]:
                 costs[right] = total
                 previous[right] = left
@@ -116,11 +119,12 @@ def _segment_cost(
     *,
     final: bool,
     options: BreakOptions,
-) -> float:
+) -> tuple[float, float]:
     overflow = max(0, length - options.target_segment_chars)
-    overflow_cost = SEMANTIC_OVERFLOW_COST * overflow * overflow
-    if options.mode == "strict":
-        overflow_cost *= STRICT_OVERFLOW_COST
+    strict_overflow = float(overflow * overflow) if options.mode == "strict" else 0.0
+    overflow_cost = (
+        0.0 if options.mode == "strict" else SEMANTIC_OVERFLOW_COST * overflow * overflow
+    )
 
     shortfall = max(0, options.min_segment_chars - length)
     short_cost = SHORTFALL_COST * shortfall * shortfall
@@ -128,11 +132,12 @@ def _segment_cost(
     fill_ratio = max(0, options.target_segment_chars - length) / options.target_segment_chars
     fill_scale = FINAL_FILL_COST if final else FILL_COST
     fill_cost = fill_scale * fill_ratio * fill_ratio
-    if final:
-        return overflow_cost + short_cost + fill_cost
+    layout_cost = overflow_cost + short_cost + fill_cost
 
-    boundary_cost = BREAK_COST + SYNTAX_COST * boundary.penalty
-    return overflow_cost + short_cost + fill_cost + boundary_cost
+    if not final:
+        layout_cost += BREAK_COST + SYNTAX_COST * boundary.penalty
+
+    return strict_overflow, layout_cost
 
 
 def _segment_length(text: str, start: int, end: int) -> int:

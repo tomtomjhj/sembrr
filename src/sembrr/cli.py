@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="semantic",
         help=(
             "breaking policy: sentence emits only sentence boundaries; "
-            "semantic adds syntax-scored breaks; strict strongly favors the target "
+            "semantic adds syntax-scored breaks; strict enforces the target "
             "(default: semantic)"
         ),
     )
