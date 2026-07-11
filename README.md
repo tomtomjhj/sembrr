@@ -8,7 +8,9 @@ and never edit files in place.
 
 The default mode keeps sentence boundaries
 and adds syntax-scored breaks inside long sentences.
-It is not a width-based wrapper.
+The default target is 88 printed characters per segment.
+Semantic mode can exceed it to preserve stronger syntax,
+so Sembrr is not a width-based wrapper.
 
 ## Installation
 
@@ -42,16 +44,17 @@ Use sentence-only mode:
 sembrr --mode sentence < notes.md
 ```
 
-Use strict mode to enforce `--target-segment-chars`
+Use strict mode to enforce `--target-chars`
 at safe token boundaries when semantic mode permits an overlong segment:
 
 ```sh
-sembrr --mode strict --target-segment-chars 80 < notes.md
+sembrr --mode strict --target-chars 80 < notes.md
 ```
 
-Use `--min-segment-chars` to discourage short lines.
+Use `--min-chars` to discourage short lines.
 The minimum is a soft preference,
 so a strong syntactic boundary can still produce a shorter segment.
+The minimum cannot exceed `--target-chars`.
 
 ## Exit Status
 

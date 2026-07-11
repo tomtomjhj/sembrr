@@ -19,7 +19,7 @@ class BreakBoundary:
 @dataclass(frozen=True)
 class BreakOptions:
     mode: Mode = "semantic"
-    target_segment_chars: int = 100
+    target_segment_chars: int = 88
     min_segment_chars: int = 24
 
     def __post_init__(self) -> None:
@@ -29,3 +29,5 @@ class BreakOptions:
             raise ValueError("target segment characters must be greater than zero")
         if self.min_segment_chars <= 0:
             raise ValueError("minimum segment characters must be greater than zero")
+        if self.min_segment_chars > self.target_segment_chars:
+            raise ValueError("minimum segment characters cannot exceed target segment characters")

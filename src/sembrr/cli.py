@@ -24,12 +24,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=MODES,
         default="semantic",
+        help=(
+            "breaking policy: sentence emits only sentence boundaries; "
+            "semantic adds syntax-scored breaks; strict strongly favors the target "
+            "(default: semantic)"
+        ),
     )
-    parser.add_argument("--parser", choices=("markdown", "text"), default="markdown")
-    parser.add_argument("--text", action="store_true", help="alias for --parser text")
-    parser.add_argument("--model", default="en_core_web_sm", help="spaCy model name")
-    parser.add_argument("--target-segment-chars", type=_positive_int, default=100)
-    parser.add_argument("--min-segment-chars", type=_positive_int, default=24)
+    parser.add_argument(
+        "--text",
+        action="store_true",
+        help="treat stdin as plain text; Markdown syntax has no special meaning",
+    )
+    parser.add_argument(
+        "--model",
+        default="en_core_web_sm",
+        help=(
+            "English spaCy model; semantic and strict modes require a dependency parser "
+            "(default: en_core_web_sm)"
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--target-chars",
+        type=_positive_int,
+        default=88,
+        help="target printed characters per segment; semantic mode may exceed it (default: 88)",
+    )
+    parser.add_argument(
+        "--min-chars",
+        type=_positive_int,
+        default=24,
+        help="soft minimum printed characters per segment (default: 24)",
+    )
     return parser
 
 
@@ -37,12 +63,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    parser_name = "text" if args.text else args.parser
     try:
         options = BreakOptions(
             mode=args.mode,
-            target_segment_chars=args.target_segment_chars,
-            min_segment_chars=args.min_segment_chars,
+            target_segment_chars=args.target_chars,
+            min_segment_chars=args.min_chars,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -50,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         source = sys.stdin.read()
         engine = SentenceEngine(model=args.model)
-        if parser_name == "text":
+        if args.text:
             result = format_text(source, engine, options)
         else:
             result = format_markdown(source, engine, options)

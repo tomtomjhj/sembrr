@@ -129,6 +129,32 @@ class SembrrTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "One sentence.\nAnother sentence.\n")
 
+    def test_cli_text_mode_treats_markdown_as_plain_text(self) -> None:
+        output = StringIO()
+
+        with (
+            patch("sembrr.cli.SentenceEngine", return_value=ENGINE),
+            patch("sys.stdin", StringIO("One sentence.  \nAnother sentence.\n")),
+            redirect_stdout(output),
+        ):
+            exit_code = main(["--text"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "One sentence.\nAnother sentence.\n")
+
+    def test_cli_applies_length_controls(self) -> None:
+        output = StringIO()
+
+        with (
+            patch("sembrr.cli.SentenceEngine", return_value=ENGINE),
+            patch("sys.stdin", StringIO("aaaaa bbbbb\n")),
+            redirect_stdout(output),
+        ):
+            exit_code = main(["--mode", "strict", "-t", "6", "--min-chars", "1"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "aaaaa\nbbbbb\n")
+
     def test_cli_handles_closed_downstream_pipe(self) -> None:
         with (
             patch("sembrr.cli.SentenceEngine", return_value=ENGINE),

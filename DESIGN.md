@@ -159,9 +159,9 @@ Typical use remains dominated by spaCy startup and parsing.
 
 ```text
 mode = semantic
-parser = markdown
+input = Markdown
 model = en_core_web_sm
-target_segment_chars = 100
+target_segment_chars = 88
 min_segment_chars = 24
 ```
 
