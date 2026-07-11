@@ -6,13 +6,18 @@ to add semantic line breaks without changing rendered Markdown.
 ## Source Preservation
 
 Source preservation is a hard requirement.
-Sembrr changes only whitespace used for accepted line breaks.
+Sembrr changes only whitespace used for accepted line breaks
+and existing line endings inside inline code spans.
 
 The formatter does not round-trip Markdown through a renderer or serializer.
 It rewrites the original source directly,
 using parser output to find safe ranges and source offsets.
 
-Atomic Markdown spans remain byte-for-byte unchanged.
+Atomic Markdown spans remain byte-for-byte unchanged,
+except that Sembrr may replace each line ending inside an inline code span
+with one ASCII space.
+Surrounding code-span whitespace remains unchanged.
+The formatter never inserts a break inside an atomic span.
 They include:
 
 - Fenced and indented code blocks.
@@ -37,8 +42,11 @@ tables,
 code blocks,
 front matter,
 and link reference definitions remain unchanged.
-A paragraph also remains unchanged when it contains a Markdown hard break
-or a multiline atomic inline span.
+A paragraph remains unchanged when it contains a Markdown hard break.
+In an otherwise format-safe paragraph,
+multiline inline code is normalized to one source line before analysis.
+The paragraph remains unchanged
+when any atomic inline span is still multiline after that normalization.
 
 Inline formatting uses a projected prose view for NLP analysis:
 
@@ -175,7 +183,8 @@ Tests cover these guarantees:
 
 - Formatting is idempotent.
 - No files are written by default.
-- Atomic Markdown syntax remains byte-for-byte unchanged.
+- Atomic Markdown syntax remains byte-for-byte unchanged after permitted
+  multiline code-span normalization.
 - Hard breaks and uncertain multiline inline source remain unchanged.
 - Structural continuation prefixes are preserved.
 - Every optional break maps to source whitespace.

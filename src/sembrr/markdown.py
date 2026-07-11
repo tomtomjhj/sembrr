@@ -8,7 +8,7 @@ from tree_sitter import Language, Node, Parser
 from .engine import BreakAnalysis, BreakEngine
 from .layout import apply_breaks, select_breaks
 from .models import BreakOptions
-from .protect import ProjectedText, inspect_inline
+from .protect import ProjectedText, inspect_inline, merge_multiline_code_spans
 
 PRESERVED_PREFIX_NODE_TYPES = {"block_continuation", "block_quote_marker"}
 
@@ -272,12 +272,16 @@ def _prepare_block(
     body_source = "\n".join(body_lines)
 
     body_inspection = inspect_inline(body_source) if markdown else None
-    if body_inspection is not None and (
-        body_inspection.has_hard_line_break or body_inspection.has_multiline_protected_span
-    ):
+    if body_inspection is not None and body_inspection.has_hard_line_break:
         return None
 
-    text = " ".join(line.strip() for line in body_lines if line.strip())
+    if body_inspection is not None and body_inspection.has_multiline_protected_span:
+        body_source = merge_multiline_code_spans(body_source)
+        body_inspection = inspect_inline(body_source)
+        if body_inspection.has_multiline_protected_span:
+            return None
+
+    text = " ".join(line.strip() for line in body_source.splitlines() if line.strip())
     if not text:
         return None
 

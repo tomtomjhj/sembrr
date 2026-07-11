@@ -81,6 +81,25 @@ def has_multiline_protected_span(text: str) -> bool:
     return _has_multiline_protected_node(tree.root_node)
 
 
+def merge_multiline_code_spans(text: str) -> str:
+    """Replace each line ending inside an inline code span with one space."""
+    tree = _parse_inline(text)
+    byte_to_char = _byte_to_char_offsets(text)
+    spans = _multiline_code_spans(tree.root_node, byte_to_char)
+    parts: list[str] = []
+    cursor = 0
+
+    for start, end in spans:
+        parts.append(text[cursor:start])
+        code_span = text[start:end]
+        code_span = code_span.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+        parts.append(code_span)
+        cursor = end
+
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def _collect_spans_from_tree(text: str, tree: Tree) -> list[tuple[int, int]]:
     byte_to_char = _byte_to_char_offsets(text)
     spans = _protected_node_spans(tree.root_node, byte_to_char)
@@ -188,6 +207,16 @@ def _has_multiline_protected_node(node: Node) -> bool:
         return True
 
     return any(_has_multiline_protected_node(child) for child in node.children)
+
+
+def _multiline_code_spans(node: Node, byte_to_char: dict[int, int]) -> list[tuple[int, int]]:
+    if node.type == "code_span" and node.start_point.row != node.end_point.row:
+        return [(byte_to_char[node.start_byte], byte_to_char[node.end_byte])]
+
+    spans: list[tuple[int, int]] = []
+    for child in node.children:
+        spans.extend(_multiline_code_spans(child, byte_to_char))
+    return spans
 
 
 def _byte_to_char_offsets(text: str) -> dict[int, int]:

@@ -26,6 +26,8 @@ and does not edit input files in place.
 
 Markdown formatting must preserve rendered meaning.
 Atomic Markdown spans remain byte-for-byte unchanged,
+except that each line ending inside an inline code span may become one ASCII space.
+The formatter never inserts a break inside an atomic span,
 and a paragraph with uncertain source mapping remains unchanged.
 Plain-text mode uses an identity prose projection.
 Markdown syntax has no special status in that mode.
@@ -39,8 +41,9 @@ Do not add heuristic input scanners or nesting limits
 to hide crashes in `tree-sitter-markdown`.
 Use a dependency fix, pin, or upstream report instead.
 
-The treatment of existing soft breaks and surrounding whitespace
+The treatment of existing prose soft breaks and surrounding whitespace
 is still a product decision.
+Inline code span line endings follow the normalization contract above.
 Do not broaden that behavior without defining the preservation contract first.
 
 ## Architecture

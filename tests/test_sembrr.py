@@ -352,12 +352,27 @@ class SembrrTests(unittest.TestCase):
         cases = [
             "One sentence.  \nAnother sentence.\n",
             "One sentence.\\\nAnother sentence.\n",
-            "`x\ny`. Next sentence.\n",
+            "[linked\ntext](target). Next sentence.\n",
         ]
 
         for source in cases:
             with self.subTest(source=source):
                 self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), source)
+
+    def test_merges_multiline_code_span_without_splitting_it(self) -> None:
+        source = "Before `alphaalphaalpha \n betabetabeta` after words. Next sentence.\n"
+        options = BreakOptions(
+            mode="strict",
+            target_segment_chars=20,
+            min_segment_chars=5,
+        )
+
+        result = format_markdown(source, ENGINE, options)
+
+        self.assertEqual(
+            result,
+            "Before\n`alphaalphaalpha   betabetabeta`\nafter words.\nNext sentence.\n",
+        )
 
     def test_passes_projected_text_to_engine(self) -> None:
         engine = RecordingEngine()
