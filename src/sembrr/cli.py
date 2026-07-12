@@ -8,6 +8,8 @@ from .engine import SentenceEngine, SentenceEngineError
 from .markdown import format_markdown, format_text
 from .models import MODES, BreakOptions
 
+_DEFAULT_OPTIONS = BreakOptions()
+
 
 def _positive_int(value: str) -> int:
     parsed = int(value)
@@ -24,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode",
         choices=MODES,
-        default="semantic",
+        default=_DEFAULT_OPTIONS.mode,
         help=(
             "breaking policy: sentence emits only sentence boundaries; "
             "semantic adds syntax-scored breaks; strict enforces the target "
@@ -48,14 +50,19 @@ def build_parser() -> argparse.ArgumentParser:
         "-t",
         "--target-chars",
         type=_positive_int,
-        default=88,
-        help="target printed characters per line; semantic mode may exceed it (default: 88)",
+        default=_DEFAULT_OPTIONS.target_chars,
+        help=(
+            "target printed characters per line; semantic mode may exceed it "
+            f"(default: {_DEFAULT_OPTIONS.target_chars})"
+        ),
     )
     parser.add_argument(
         "--min-chars",
         type=_positive_int,
-        default=24,
-        help="soft minimum printed characters per line (default: 24)",
+        help=(
+            "soft minimum printed characters per line; defaults to "
+            f"{_DEFAULT_OPTIONS.min_chars}, or the target when lower"
+        ),
     )
     return parser
 
@@ -84,7 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         options = BreakOptions(
             mode=args.mode,
             target_chars=args.target_chars,
-            min_chars=args.min_chars,
+            min_chars=(
+                args.min_chars
+                if args.min_chars is not None
+                else min(_DEFAULT_OPTIONS.min_chars, args.target_chars)
+            ),
         )
     except ValueError as error:
         parser.error(str(error))

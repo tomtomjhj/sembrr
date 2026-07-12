@@ -54,6 +54,9 @@ sembrr --mode strict --target-chars 80 < notes.md
 Use `--min-chars` to discourage short lines.
 The minimum is a soft preference,
 so a strong syntactic boundary can still produce a shorter segment.
+When omitted,
+the minimum defaults to 24 or `--target-chars`,
+whichever is lower.
 The minimum cannot exceed `--target-chars`.
 
 ## Exit Status

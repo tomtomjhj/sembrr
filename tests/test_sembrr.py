@@ -155,6 +155,19 @@ class SembrrTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(output.getvalue(), "aaaaa\nbbbbb\n")
 
+    def test_cli_adapts_default_minimum_to_smaller_target(self) -> None:
+        output = StringIO()
+
+        with (
+            patch("sembrr.cli.SentenceEngine", return_value=ENGINE),
+            patch("sys.stdin", StringIO("aaaaa bbbbb\n")),
+            redirect_stdout(output),
+        ):
+            exit_code = main(["--mode", "strict", "-t", "6"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "aaaaa\nbbbbb\n")
+
     def test_cli_handles_closed_downstream_pipe(self) -> None:
         with (
             patch("sembrr.cli.SentenceEngine", return_value=ENGINE),
