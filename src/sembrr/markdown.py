@@ -241,18 +241,6 @@ def format_text(source: str, engine: BreakEngine, options: BreakOptions) -> str:
     return _format_parts(parts, engine, options)
 
 
-def format_markdown_block(
-    block: str,
-    engine: BreakEngine,
-    options: BreakOptions,
-    prefix_info: PrefixInfo | None = None,
-) -> str:
-    prepared = _prepare_block(block, prefix_info=prefix_info, markdown=True)
-    if prepared is None:
-        return block
-    return _format_parts([prepared], engine, options)
-
-
 def _prepare_block(
     block: str,
     *,
@@ -334,9 +322,9 @@ def _format_prepared_block(
 ) -> str:
     body_options = replace(
         options,
-        target_segment_chars=max(
+        target_chars=max(
             1,
-            options.target_segment_chars - len(prepared.prefix_info.first_prefix),
+            options.target_chars - len(prepared.prefix_info.first_prefix),
         ),
     )
     formatted = _format_projected_prose(prepared.projected, analysis, body_options)

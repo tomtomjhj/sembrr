@@ -48,13 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--target-chars",
         type=_positive_int,
         default=88,
-        help="target printed characters per segment; semantic mode may exceed it (default: 88)",
+        help="target printed characters per line; semantic mode may exceed it (default: 88)",
     )
     parser.add_argument(
         "--min-chars",
         type=_positive_int,
         default=24,
-        help="soft minimum printed characters per segment (default: 24)",
+        help="soft minimum printed characters per line (default: 24)",
     )
     return parser
 
@@ -66,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         options = BreakOptions(
             mode=args.mode,
-            target_segment_chars=args.target_chars,
-            min_segment_chars=args.min_chars,
+            target_chars=args.target_chars,
+            min_chars=args.min_chars,
         )
     except ValueError as error:
         parser.error(str(error))

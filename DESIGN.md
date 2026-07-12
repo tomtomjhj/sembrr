@@ -120,7 +120,7 @@ and therefore the shared numeric score.
 ## Global Selection
 
 Selection operates independently within each mandatory sentence segment.
-A segment that already fits `target_segment_chars` remains flat.
+A segment that already fits `target_chars` remains flat.
 
 For a longer segment,
 the start,
@@ -131,8 +131,8 @@ Exact dynamic programming finds the minimum-cost path through that graph.
 
 The cost of each segment combines:
 
-- squared overflow beyond `target_segment_chars`;
-- squared shortfall below `min_segment_chars`;
+- squared overflow beyond `target_chars`;
+- squared shortfall below `min_chars`;
 - raggedness costs for underfilled segments;
 - a fixed break cost;
 - the dependency-cut penalty.
@@ -173,8 +173,8 @@ Typical use remains dominated by spaCy startup and parsing.
 mode = semantic
 input = Markdown
 model = en_core_web_sm
-target_segment_chars = 88
-min_segment_chars = 24
+target_chars = 88
+min_chars = 24
 ```
 
 ## Guarantees

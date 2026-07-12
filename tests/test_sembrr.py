@@ -363,8 +363,8 @@ class SembrrTests(unittest.TestCase):
         source = "Before `alphaalphaalpha \n betabetabeta` after words. Next sentence.\n"
         options = BreakOptions(
             mode="strict",
-            target_segment_chars=20,
-            min_segment_chars=5,
+            target_chars=20,
+            min_chars=5,
         )
 
         result = format_markdown(source, ENGINE, options)
@@ -462,7 +462,7 @@ class SembrrTests(unittest.TestCase):
         source = f"{'a' * 35} {'b' * 35} {'c' * 35}"
         weak = BreakBoundary(offset=35, penalty=1)
         strong = BreakBoundary(offset=71, penalty=0.1)
-        options = BreakOptions(target_segment_chars=80)
+        options = BreakOptions(target_chars=80)
 
         self.assertEqual(select_breaks(source, [weak, strong], options), [strong])
 
@@ -482,7 +482,7 @@ class SembrrTests(unittest.TestCase):
         first = BreakBoundary(offset=45, penalty=0.1)
         middle = BreakBoundary(offset=91, penalty=0.2)
         last = BreakBoundary(offset=137, penalty=0.1)
-        options = BreakOptions(target_segment_chars=100)
+        options = BreakOptions(target_chars=100)
 
         self.assertEqual(
             select_breaks(source, [first, middle, last], options),
@@ -492,21 +492,21 @@ class SembrrTests(unittest.TestCase):
     def test_short_segment_length_is_a_soft_cost(self) -> None:
         source = f"{'a' * 20} {'b' * 90}"
         boundary = BreakBoundary(offset=20, penalty=0)
-        options = BreakOptions(target_segment_chars=100, min_segment_chars=24)
+        options = BreakOptions(target_chars=100, min_chars=24)
 
         self.assertEqual(select_breaks(source, [boundary], options), [boundary])
 
     def test_semantic_mode_can_leave_a_small_overflow(self) -> None:
         source = f"{'a' * 50} {'b' * 51}"
         boundary = BreakBoundary(offset=50, penalty=1)
-        options = BreakOptions(target_segment_chars=100)
+        options = BreakOptions(target_chars=100)
 
         self.assertEqual(select_breaks(source, [boundary], options), [])
 
     def test_strict_mode_uses_a_weak_boundary_for_overflow(self) -> None:
         source = f"{'a' * 50} {'b' * 51}"
         boundary = BreakBoundary(offset=50, penalty=1)
-        options = BreakOptions(mode="strict", target_segment_chars=100)
+        options = BreakOptions(mode="strict", target_chars=100)
 
         self.assertEqual(select_breaks(source, [boundary], options), [boundary])
 
@@ -515,8 +515,8 @@ class SembrrTests(unittest.TestCase):
         boundary = BreakBoundary(offset=50, penalty=0)
         options = BreakOptions(
             mode="strict",
-            target_segment_chars=100,
-            min_segment_chars=100,
+            target_chars=100,
+            min_chars=100,
         )
 
         self.assertEqual(select_breaks(source, [boundary], options), [boundary])
@@ -538,7 +538,7 @@ class SembrrTests(unittest.TestCase):
     def test_selection_uses_printed_source_length(self) -> None:
         source = "**Writers keep context visible; readers understand the result**"
         boundary = BreakBoundary(offset=source.index(";") + 1, penalty=0)
-        options = BreakOptions(target_segment_chars=59, min_segment_chars=10)
+        options = BreakOptions(target_chars=59, min_chars=10)
 
         self.assertEqual(select_breaks(source, [boundary], options), [boundary])
 
@@ -552,7 +552,7 @@ class SembrrTests(unittest.TestCase):
             "[an unusually long linked reference](https://example.com/some/long/path)\n"
             "after words.\n"
         )
-        options = BreakOptions(mode="strict", target_segment_chars=24)
+        options = BreakOptions(mode="strict", target_chars=24)
 
         self.assertEqual(format_markdown(source, ENGINE, options), expected)
 
@@ -560,8 +560,8 @@ class SembrrTests(unittest.TestCase):
         source = "1. The snapshot includes stable identifiers, timestamps, and source links.\n"
         options = BreakOptions(
             mode="strict",
-            target_segment_chars=72,
-            min_segment_chars=18,
+            target_chars=72,
+            min_chars=18,
         )
 
         result = format_markdown(source, ENGINE, options)
@@ -620,7 +620,7 @@ class RealEngineEndToEndTests(unittest.TestCase):
             "the analyzer scores each boundary,\n"
             "and the layout chooses a coherent result.\n"
         )
-        options = BreakOptions(target_segment_chars=62, min_segment_chars=20)
+        options = BreakOptions(target_chars=62, min_chars=20)
 
         self.assertEqual(format_markdown(source, self.engine, options), expected)
 
@@ -637,8 +637,8 @@ class RealEngineEndToEndTests(unittest.TestCase):
         )
         options = BreakOptions(
             mode="strict",
-            target_segment_chars=36,
-            min_segment_chars=12,
+            target_chars=36,
+            min_chars=12,
         )
 
         self.assertEqual(format_markdown(source, self.engine, options), expected)
@@ -670,7 +670,7 @@ class RealEngineEndToEndTests(unittest.TestCase):
                 "each state has a distinct follow-up action for the operator.\n",
             ),
         ]
-        options = BreakOptions(target_segment_chars=72, min_segment_chars=18)
+        options = BreakOptions(target_chars=72, min_chars=18)
 
         for source, expected in cases:
             with self.subTest(source=source):
@@ -682,7 +682,7 @@ class RealEngineEndToEndTests(unittest.TestCase):
             "before publishing; the preview records every selected input, and the final pass "
             "reuses that snapshot so reviewers can compare the two operations.\n"
         )
-        options = BreakOptions(target_segment_chars=72, min_segment_chars=18)
+        options = BreakOptions(target_chars=72, min_chars=18)
 
         result = format_markdown(source, self.engine, options)
 

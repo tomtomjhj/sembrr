@@ -37,7 +37,6 @@ class ProjectedText:
     source: str
     text: str
     source_offsets: tuple[int, ...]
-    protected_spans: tuple[tuple[int, int], ...] = ()
 
     def source_offset(self, offset: int) -> int:
         return self.source_offsets[offset]
@@ -69,16 +68,6 @@ def inspect_inline(text: str) -> InlineInspection:
 def project_inline(text: str) -> ProjectedText:
     tree = _parse_inline(text)
     return _project_text_from_tree(text, tree)
-
-
-def has_hard_line_break(text: str) -> bool:
-    tree = _parse_inline(text)
-    return _has_node_type(tree.root_node, "hard_line_break")
-
-
-def has_multiline_protected_span(text: str) -> bool:
-    tree = _parse_inline(text)
-    return _has_multiline_protected_node(tree.root_node)
 
 
 def merge_multiline_code_spans(text: str) -> str:
@@ -149,7 +138,6 @@ def _project_text_from_tree(text: str, tree: Tree) -> ProjectedText:
         source=text,
         text="".join(pieces),
         source_offsets=tuple(source_offsets),
-        protected_spans=tuple(protected_spans),
     )
 
 

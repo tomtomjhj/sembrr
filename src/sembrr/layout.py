@@ -30,7 +30,7 @@ def select_breaks(
     segment_boundaries = [0, *(boundary.offset for boundary in mandatory), len(text)]
 
     for start, end in zip(segment_boundaries, segment_boundaries[1:], strict=False):
-        if _segment_length(text, start, end) <= options.target_segment_chars:
+        if _segment_length(text, start, end) <= options.target_chars:
             continue
 
         local = [boundary for boundary in optional if start < boundary.offset < end]
@@ -120,16 +120,16 @@ def _segment_cost(
     final: bool,
     options: BreakOptions,
 ) -> tuple[float, float]:
-    overflow = max(0, length - options.target_segment_chars)
+    overflow = max(0, length - options.target_chars)
     strict_overflow = float(overflow * overflow) if options.mode == "strict" else 0.0
     overflow_cost = (
         0.0 if options.mode == "strict" else SEMANTIC_OVERFLOW_COST * overflow * overflow
     )
 
-    shortfall = max(0, options.min_segment_chars - length)
+    shortfall = max(0, options.min_chars - length)
     short_cost = SHORTFALL_COST * shortfall * shortfall
 
-    fill_ratio = max(0, options.target_segment_chars - length) / options.target_segment_chars
+    fill_ratio = max(0, options.target_chars - length) / options.target_chars
     fill_scale = FINAL_FILL_COST if final else FILL_COST
     fill_cost = fill_scale * fill_ratio * fill_ratio
     layout_cost = overflow_cost + short_cost + fill_cost
