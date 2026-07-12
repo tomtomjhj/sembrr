@@ -167,6 +167,34 @@ class SembrrTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         stdout.write.assert_called_once_with("One sentence.\nAnother sentence.\n")
 
+    def test_cli_handles_buffered_closed_downstream_pipe(self) -> None:
+        code = (
+            "import sys\n"
+            "from io import StringIO\n"
+            "import sembrr.cli as cli\n"
+            "class Engine:\n"
+            "    def break_boundaries_batch(self, texts, **kwargs):\n"
+            "        return [[] for _ in texts]\n"
+            "cli.SentenceEngine = lambda model: Engine()\n"
+            "sys.stdin = StringIO('One sentence.\\n')\n"
+            "raise SystemExit(cli.main([]))\n"
+        )
+        with subprocess.Popen(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as process:
+            assert process.stdout is not None
+            assert process.stderr is not None
+            process.stdout.close()
+            stderr = process.stderr.read()
+            exit_code = process.wait(timeout=10)
+
+        self.assertEqual(exit_code, 0, stderr)
+        self.assertEqual(stderr, "")
+
     def test_markdown_parser_survives_large_shallow_document(self) -> None:
         code = (
             "import sys\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .engine import SentenceEngine, SentenceEngineError
@@ -59,6 +60,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _silence_stdout() -> None:
+    try:
+        stdout_fd = sys.stdout.fileno()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return
+
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, stdout_fd)
+        finally:
+            os.close(devnull_fd)
+    except (OSError, TypeError, ValueError):
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -80,7 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = format_markdown(source, engine, options)
         sys.stdout.write(result)
+        sys.stdout.flush()
     except BrokenPipeError:
+        _silence_stdout()
         return 0
     except KeyboardInterrupt:
         return 130
