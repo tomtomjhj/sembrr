@@ -17,6 +17,15 @@ class ProjectionTests(unittest.TestCase):
             2,
         )
 
+    def test_projected_atom_does_not_absorb_sentence_punctuation(self) -> None:
+        projected = inspect_inline("Write to `M`. Next sentence.").projected
+        tokens = English().make_doc(projected.text)
+        atom = next(
+            index for index, token in enumerate(tokens) if token.text.startswith("SEMBRRATOM")
+        )
+
+        self.assertEqual(tokens[atom + 1].text, ".")
+
 
 if __name__ == "__main__":
     unittest.main()

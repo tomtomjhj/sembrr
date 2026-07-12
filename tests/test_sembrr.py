@@ -622,8 +622,8 @@ class SembrrTests(unittest.TestCase):
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
     def test_placeholder_text_in_source_is_not_replaced(self) -> None:
-        source = "Keep SEMBRRATOM0X0X literal. Then use `src/a.b.py`.\n"
-        expected = "Keep SEMBRRATOM0X0X literal.\nThen use `src/a.b.py`.\n"
+        source = "Keep SEMBRRATOMAXAX literal. Then use `src/a.b.py`.\n"
+        expected = "Keep SEMBRRATOMAXAX literal.\nThen use `src/a.b.py`.\n"
 
         self.assertEqual(format_markdown(source, ENGINE, BreakOptions()), expected)
 
@@ -664,6 +664,15 @@ class RealEngineEndToEndTests(unittest.TestCase):
         options = BreakOptions(target_chars=62, min_chars=20)
 
         self.assertEqual(format_markdown(source, self.engine, options), expected)
+
+    def test_inline_atom_preserves_following_sentence_boundary(self) -> None:
+        source = "The command writes to `M`. SP belongs to one worker.\n"
+        expected = "The command writes to `M`.\nSP belongs to one worker.\n"
+
+        self.assertEqual(
+            format_markdown(source, self.engine, BreakOptions(mode="sentence")),
+            expected,
+        )
 
     def test_strict_markdown_formatting_preserves_an_atom(self) -> None:
         source = (
