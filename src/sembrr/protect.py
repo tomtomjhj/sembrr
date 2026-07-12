@@ -65,11 +65,6 @@ def inspect_inline(text: str) -> InlineInspection:
     )
 
 
-def project_inline(text: str) -> ProjectedText:
-    tree = _parse_inline(text)
-    return _project_text_from_tree(text, tree)
-
-
 def merge_multiline_code_spans(text: str) -> str:
     """Replace each line ending inside an inline code span with one space."""
     tree = _parse_inline(text)

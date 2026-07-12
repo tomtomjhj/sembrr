@@ -4,12 +4,12 @@ import unittest
 
 from spacy.lang.en import English
 
-from sembrr.protect import project_inline
+from sembrr.protect import inspect_inline
 
 
 class ProjectionTests(unittest.TestCase):
     def test_projects_each_markdown_atom_as_one_nlp_token(self) -> None:
-        projected = project_inline("Use `value` with [the guide](guide.md).")
+        projected = inspect_inline("Use `value` with [the guide](guide.md).").projected
         tokens = English().make_doc(projected.text)
 
         self.assertEqual(
