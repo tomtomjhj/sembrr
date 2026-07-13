@@ -474,6 +474,43 @@ class SembrrTests(unittest.TestCase):
             [index for index, char in enumerate(source) if char == " "],
         )
 
+    def test_left_punctuation_dependency_does_not_raise_cut_penalty(self) -> None:
+        for punctuation in (",", ":", ";", "—"):
+            with self.subTest(punctuation=punctuation):
+                source = f"Alpha{punctuation} beta."
+                doc = _fake_tree(
+                    source,
+                    ["Alpha", punctuation, "beta", "."],
+                    [0, 2, 2, 2],
+                    ["NOUN", "PUNCT", "NOUN", "PUNCT"],
+                )
+
+                boundaries = spacy_optional_boundaries(source, doc)
+
+                self.assertEqual(
+                    boundaries,
+                    [BreakBoundary(offset=len(f"Alpha{punctuation}"), penalty=0)],
+                )
+
+    def test_punctuation_dependency_still_scores_a_later_gap(self) -> None:
+        source = "Alpha; beta gamma."
+        doc = _fake_tree(
+            source,
+            ["Alpha", ";", "beta", "gamma", "."],
+            [0, 3, 2, 3, 3],
+            ["NOUN", "PUNCT", "NOUN", "NOUN", "PUNCT"],
+        )
+
+        boundaries = spacy_optional_boundaries(source, doc)
+
+        self.assertEqual(
+            boundaries,
+            [
+                BreakBoundary(offset=6, penalty=0),
+                BreakBoundary(offset=11, penalty=0.25),
+            ],
+        )
+
     def test_short_dependencies_make_a_break_expensive(self) -> None:
         source = "Alpha and beta arrives."
         doc = _fake_tree(
@@ -664,6 +701,19 @@ class RealEngineEndToEndTests(unittest.TestCase):
         options = BreakOptions(target_chars=62, min_chars=20)
 
         self.assertEqual(format_markdown(source, self.engine, options), expected)
+
+    def test_semantic_mode_favors_a_semicolon_boundary(self) -> None:
+        source = (
+            "It is not merely evidence that the integration is feasible; it is the closest "
+            "implementation reference for wiring the same value path into the xyz interpreter.\n"
+        )
+        expected = (
+            "It is not merely evidence that the integration is feasible;\n"
+            "it is the closest implementation reference for wiring the same value path\n"
+            "into the xyz interpreter.\n"
+        )
+
+        self.assertEqual(format_markdown(source, self.engine, BreakOptions()), expected)
 
     def test_inline_atom_preserves_following_sentence_boundary(self) -> None:
         source = "The command writes to `M`. SP belongs to one worker.\n"

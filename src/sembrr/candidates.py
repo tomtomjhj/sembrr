@@ -54,10 +54,12 @@ def dedupe_boundaries(
 
 def _boundary_penalty(tokens: list[Any], left: Any) -> float:
     offset = int(left.i)
+    ignored_punctuation_index = offset if str(left.pos_) == "PUNCT" else -1
     cut_penalty = sum(
         1.0 / (abs(int(token.i) - int(token.head.i)) ** 2)
         for token in tokens
         if int(token.head.i) != int(token.i)
+        and int(token.i) != ignored_punctuation_index
         and min(int(token.i), int(token.head.i)) <= offset < max(int(token.i), int(token.head.i))
     )
     prefix_penalty = PHRASE_PREFIX_PENALTY if str(left.pos_) in PHRASE_PREFIX_POS else 0.0

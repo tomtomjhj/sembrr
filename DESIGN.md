@@ -95,12 +95,18 @@ Each optional boundary receives one numeric dependency-cut penalty.
 For every dependency edge that crosses the gap,
 the penalty adds the inverse square of the edge's token length.
 
+When a gap immediately follows punctuation,
+the punctuation token's own dependency edge does not contribute.
+Its parser attachment position does not represent grammatical cohesion
+across the following whitespace.
+The edge still contributes to any later gap that it crosses.
+
 Short edges represent local grammatical cohesion
 and contribute most to the penalty.
 Long clause-level attachments contribute less.
 A low penalty therefore identifies a gap that cuts little local structure.
 
-The same calculation applies to every dependency edge.
+The same calculation applies to every other dependency edge.
 One additional penalty prevents a leading function word from ending a line.
 It applies to closed-class parts of speech as a group,
 without dependency-label or lexical cases.
