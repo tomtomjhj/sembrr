@@ -80,11 +80,19 @@ class BatchRecordingEngine(FixtureEngine):
 
 
 class FakeToken:
-    def __init__(self, text: str, idx: int, index: int, pos: str) -> None:
+    def __init__(
+        self,
+        text: str,
+        idx: int,
+        index: int,
+        pos: str,
+        dependency: str,
+    ) -> None:
         self.text = text
         self.idx = idx
         self.i = index
         self.pos_ = pos
+        self.dep_ = dependency
         self.head = self
 
 
@@ -511,6 +519,41 @@ class SembrrTests(unittest.TestCase):
             ],
         )
 
+    def test_right_coordinator_dependency_does_not_raise_cut_penalty(self) -> None:
+        source = "Alpha and beta."
+        doc = _fake_tree(
+            source,
+            ["Alpha", "and", "beta", "."],
+            [0, 0, 2, 2],
+            ["NOUN", "CCONJ", "NOUN", "PUNCT"],
+            ["ROOT", "cc", "ROOT", "punct"],
+        )
+
+        boundaries = spacy_optional_boundaries(source, doc)
+
+        self.assertEqual(
+            boundaries,
+            [
+                BreakBoundary(offset=5, penalty=0),
+                BreakBoundary(offset=9, penalty=1),
+            ],
+        )
+
+    def test_coordinator_dependency_still_scores_an_earlier_gap(self) -> None:
+        source = "Alpha beta and gamma."
+        doc = _fake_tree(
+            source,
+            ["Alpha", "beta", "and", "gamma", "."],
+            [0, 0, 0, 0, 3],
+            ["NOUN", "NOUN", "CCONJ", "NOUN", "PUNCT"],
+            ["ROOT", "dep", "cc", "conj", "punct"],
+        )
+
+        boundaries = spacy_optional_boundaries(source, doc)
+
+        self.assertAlmostEqual(boundaries[0].penalty, 1 + 0.25 + 1 / 9)
+        self.assertAlmostEqual(boundaries[1].penalty, 1 / 9)
+
     def test_short_dependencies_make_a_break_expensive(self) -> None:
         source = "Alpha and beta arrives."
         doc = _fake_tree(
@@ -715,6 +758,18 @@ class RealEngineEndToEndTests(unittest.TestCase):
 
         self.assertEqual(format_markdown(source, self.engine, BreakOptions()), expected)
 
+    def test_semantic_mode_favors_nominal_coordination(self) -> None:
+        source = (
+            "The main concern is the meaning of a COMMAND and the reliability of the "
+            "document adapter feeding the process.\n"
+        )
+        expected = (
+            "The main concern is the meaning of a COMMAND\n"
+            "and the reliability of the document adapter feeding the process.\n"
+        )
+
+        self.assertEqual(format_markdown(source, self.engine, BreakOptions()), expected)
+
     def test_inline_atom_preserves_following_sentence_boundary(self) -> None:
         source = "The command writes to `M`. SP belongs to one worker.\n"
         expected = "The command writes to `M`.\nSP belongs to one worker.\n"
@@ -819,15 +874,19 @@ def _fake_tree(
     words: list[str],
     heads: list[int],
     parts_of_speech: list[str] | None = None,
+    dependencies: list[str] | None = None,
 ) -> FakeDoc:
     tokens: list[FakeToken] = []
     cursor = 0
     if parts_of_speech is None:
         parts_of_speech = ["NOUN"] * len(words)
+    if dependencies is None:
+        dependencies = [""] * len(words)
 
-    for index, (word, pos) in enumerate(zip(words, parts_of_speech, strict=True)):
+    token_specs = zip(words, parts_of_speech, dependencies, strict=True)
+    for index, (word, pos, dependency) in enumerate(token_specs):
         offset = source.index(word, cursor)
-        tokens.append(FakeToken(word, offset, index, pos))
+        tokens.append(FakeToken(word, offset, index, pos, dependency))
         cursor = offset + len(word)
 
     for token, head in zip(tokens, heads, strict=True):

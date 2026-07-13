@@ -86,34 +86,31 @@ Selecting another spaCy model does not make the formatter language-independent.
 
 ## Boundary Discovery
 
+### Candidate Boundaries
+
 Sentence boundaries are mandatory.
 Every whitespace gap between adjacent projected tokens is an optional boundary.
 Protected Markdown spans appear as single tokens,
 so no optional boundary can occur inside them.
 
+### Dependency-Cut Penalties
+
 Each optional boundary receives one numeric dependency-cut penalty.
 For every dependency edge that crosses the gap,
-the penalty adds the inverse square of the edge's token length.
-
-When a gap immediately follows punctuation,
-the punctuation token's own dependency edge does not contribute.
-Its parser attachment position does not represent grammatical cohesion
-across the following whitespace.
-The edge still contributes to any later gap that it crosses.
+the penalty adds the inverse square of the edge's token distance.
 
 Short edges represent local grammatical cohesion
 and contribute most to the penalty.
 Long clause-level attachments contribute less.
 A low penalty therefore identifies a gap that cuts little local structure.
 
-The same calculation applies to every other dependency edge.
-One additional penalty prevents a leading function word from ending a line.
+One additional penalty discourages a phrase prefix from ending a line.
 It applies to closed-class parts of speech as a group,
 without dependency-label or lexical cases.
-Other determiner,
+Determiner,
 modifier,
 auxiliary,
-and object attachments receive protection from their tree locality.
+and object attachments receive their protection from token locality.
 
 The scorer does not identify semicolons,
 dashes,
@@ -122,6 +119,25 @@ subordinate clauses,
 or coordination as separate candidate kinds.
 Those structures affect the dependency topology
 and therefore the shared numeric score.
+
+### Adjacent Marker Attachments
+
+Two adjacent marker attachments need localized treatment.
+
+When a gap immediately follows punctuation,
+the punctuation token's own dependency edge does not contribute.
+Its parser attachment position does not represent grammatical cohesion
+across the following whitespace.
+The edge still contributes to any later gap that it crosses.
+
+When a gap immediately precedes a coordinating conjunction,
+the conjunction token's own `cc` dependency edge does not contribute.
+The edge identifies the coordination boundary
+rather than grammatical cohesion across it.
+The edge still contributes to any earlier gap that it crosses.
+
+The same calculation applies to every other dependency edge.
+The marker exceptions do not make a boundary mandatory.
 
 ## Global Selection
 
