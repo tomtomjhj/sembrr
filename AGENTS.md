@@ -69,6 +69,51 @@ Do not add lazy model loading,
 a daemon,
 or another long-lived process unless explicitly requested.
 
+## Debugging Formatting Decisions
+
+Reproduce an unexpected break with the exact input,
+options,
+and spaCy model.
+Inspect the formatter stages in order:
+
+1. Check the prose sent to the engine.
+   Paragraph preparation collapses existing prose soft breaks before analysis,
+   so a break that appears in both input and output may have been selected again.
+2. Inspect spaCy tokens,
+   sentence boundaries,
+   part-of-speech tags,
+   dependency labels,
+   and dependency heads.
+3. List every candidate's source offset,
+   penalty,
+   mandatory status,
+   and selection status.
+   For a surprising penalty,
+   identify each dependency edge that crosses the gap
+   and its inverse-square contribution.
+   Also check the left-token function-word penalty.
+4. Inspect the complete selected path.
+   Record its printed line lengths and layout cost,
+   then compare it with the closest plausible competing path.
+   A low candidate penalty does not explain a break by itself
+   because `layout.py` optimizes the whole sentence.
+
+Use the first stage that produces the unexpected result
+to locate the problem:
+
+- projection and source mapping belong in `protect.py` or `markdown.py`;
+- sentence and dependency parses belong in `engine.py` or the spaCy model;
+- candidate eligibility and syntax penalties belong in `candidates.py`;
+- path selection and line-length tradeoffs belong in `layout.py`.
+
+When reporting the result,
+distinguish a parser error from a scoring limitation
+and a scoring limitation from a layout tradeoff.
+Include the effective mode,
+target,
+minimum,
+and model when they affect the explanation.
+
 ## Tests and Commits
 
 Run the complete verification set after code changes:
