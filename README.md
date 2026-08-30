@@ -1,16 +1,20 @@
+> [!NOTE]
+> This is mostly AI-generated.
+
 # sembrr
 
-`sembrr` formats semantic line breaks in Markdown and plain text.
-It is a Unix filter:
-read stdin,
-write stdout,
-and never edit files in place.
+`sembrr` is a Unix filter that formats Markdown and plain text
+with [semantic line breaks](https://sembr.org/).
+It breaks paragraphs at sentence boundaries.
+When a sentence exceeds the target line length,
+it uses spaCy's syntax analysis to choose additional breaks.
 
-The default mode keeps sentence boundaries
-and adds syntax-scored breaks inside long sentences.
-The default target is 88 printed characters per line.
-Semantic mode can exceed it to preserve stronger syntax,
-so Sembrr is not a width-based wrapper.
+It's like [sembr](https://github.com/admk/sembr),
+but without fine-tuned transformer model.
+Its break choices are probably less refined,
+but they work well enough for my main use case:
+formatting arbitrarily formatted Claude-generated prose
+before reading and revising it in Vim.
 
 ## Installation
 
